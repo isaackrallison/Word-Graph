@@ -17,7 +17,7 @@ import time
 import numpy as np
 
 EMBED_DIMS = 1536
-PCA_DIMS = 50
+PCA_DIMS = 192
 K_CLUSTERS = 8
 CLOUD_RADIUS = 100.0  # scene half-extent (larger than the 1k version — 100x the points)
 OUT = "public/data"

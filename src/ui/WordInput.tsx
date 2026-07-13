@@ -23,7 +23,7 @@ export function WordInput({ busy, disabled, onSubmit }: WordInputProps) {
         type="text"
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        placeholder="type a word to place it in the galaxy…"
+        placeholder="type a word… or try: king - man + woman"
         maxLength={40}
         disabled={disabled}
         autoComplete="off"

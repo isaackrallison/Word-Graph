@@ -144,5 +144,85 @@ function run(frames: { hands: HandData[]; dt?: number }[]): GestureEvent[] {
   check('hands lost → idle state', ev.some((e) => e.type === 'state' && e.state === 'idle'));
 }
 
+// --- two open hands crossing paths: no spurious selects or orbits ---
+{
+  const frames = Array.from({ length: 20 }, (_, i) => ({
+    hands: [hand(0.3 + i * 0.02, 0.5, false), hand(0.7 - i * 0.02, 0.5, false)],
+  }));
+  const ev = run(frames);
+  check('crossing open hands: no select', !ev.some((e) => e.type === 'select'));
+  check('crossing open hands: no orbit', !ev.some((e) => e.type === 'orbit'));
+  check('crossing open hands: stays in cursor mode', !ev.some((e) => e.type === 'state' && (e.state === 'orbit' || e.state === 'zoom')));
+}
+
+// --- zoom → one hand releases → seamless orbit, dolly stops ---
+{
+  const frames = [
+    ...Array.from({ length: 10 }, (_, i) => ({
+      hands: [hand(0.4 - i * 0.01, 0.5, true), hand(0.6 + i * 0.01, 0.5, true)],
+    })),
+    // right hand releases; left keeps pinching and moving
+    ...Array.from({ length: 10 }, (_, i) => ({
+      hands: [hand(0.3 + i * 0.015, 0.5, true), hand(0.7, 0.5, false)],
+    })),
+  ];
+  const ev = run(frames);
+  const firstOrbit = ev.findIndex((e) => e.type === 'orbit');
+  const lastDolly = ev.map((e) => e.type).lastIndexOf('dolly');
+  check('zoom hand-release → orbit continues', firstOrbit !== -1);
+  check('dolly stops once a hand releases', lastDolly < firstOrbit);
+  check(
+    'zoom release is not a tap',
+    !ev.some((e) => e.type === 'select'),
+    'releasing one zoom hand must not select'
+  );
+}
+
+// --- hand teleport (> MATCH_DIST): new track, no phantom tap ---
+{
+  const frames = [
+    { hands: [hand(0.2, 0.2, true)], dt: 40 }, // pinched hand appears
+    { hands: [hand(0.2, 0.2, true)], dt: 40 },
+    { hands: [hand(0.85, 0.85, false)], dt: 40 }, // teleports across screen, open
+    { hands: [hand(0.85, 0.85, false)], dt: 40 },
+  ];
+  const ev = run(frames);
+  check('teleported hand fires no phantom tap', !ev.some((e) => e.type === 'select'));
+  const cursors = ev.filter((e) => e.type === 'cursor') as { x: number }[];
+  check(
+    'teleported hand tracked at new position',
+    cursors.length > 0 && Math.abs(cursors.at(-1)!.x - 0.85) < 0.1
+  );
+}
+
+// --- pinch immediately on first detection then quick release = still a tap ---
+{
+  const frames = [
+    { hands: [], dt: 40 },
+    { hands: [hand(0.5, 0.5, true)], dt: 40 }, // appears already pinched
+    { hands: [hand(0.5, 0.5, true)], dt: 40 },
+    { hands: [hand(0.5, 0.5, false)], dt: 40 },
+  ];
+  const ev = run(frames);
+  check('pinch-on-appearance quick release taps', ev.filter((e) => e.type === 'select').length === 1);
+}
+
+// --- cursor smoothing converges to a still hand ---
+{
+  const frames = [
+    { hands: [hand(0.2, 0.2, false)] },
+    ...Array.from({ length: 30 }, () => ({ hands: [hand(0.8, 0.6, false)] })),
+  ];
+  const ev = run(frames);
+  // The cursor is the INDEX TIP, which the synthetic open hand puts at
+  // (cx + 0.04, cy + 0.04) — converge to that, not the hand center.
+  const last = ev.filter((e) => e.type === 'cursor').at(-1) as { x: number; y: number };
+  check(
+    'cursor converges to the index tip',
+    Math.abs(last.x - 0.84) < 0.01 && Math.abs(last.y - 0.64) < 0.01,
+    `(${last.x.toFixed(3)}, ${last.y.toFixed(3)})`
+  );
+}
+
 console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

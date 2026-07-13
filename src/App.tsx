@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { loadGraphData, type GraphData } from './lib/data';
-import { nearestNeighbors, placeByNeighbors, projectEmbedding } from './lib/project';
+import { nearestNeighbors, placeByNeighbors, projectEmbedding, type Neighbor } from './lib/project';
+import { combine, equationNeighbors, parseExpression, resolveTermVecs, type Term } from './lib/algebra';
 import { SCENE_BACKGROUND } from './lib/palette';
 import type { AddedWord } from './types';
 import { WordCloud } from './scene/WordCloud';
@@ -9,10 +10,12 @@ import { Labels } from './scene/Labels';
 import { CameraRig, type CameraRigHandle } from './scene/CameraRig';
 import { NewWord } from './scene/NewWord';
 import { Effects, Starfield } from './scene/Effects';
+import { EquationMarker } from './scene/EquationMarker';
 import { GestureCursor } from './scene/GestureCursor';
 import { isMockHand, useGestures } from './gesture/useGestures';
 import { WordInput } from './ui/WordInput';
 import { AddedWords } from './ui/AddedWords';
+import { EquationCard } from './ui/EquationCard';
 import { GesturePanel } from './ui/GesturePanel';
 
 const ORBIT_GAIN = 3.5; // screen-fraction pinch-drag → radians
@@ -35,6 +38,11 @@ export default function App() {
   const [added, setAdded] = useState<AddedWord[]>([]);
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [equation, setEquation] = useState<{
+    terms: Term[];
+    candidates: Neighbor[];
+    position: [number, number, number];
+  } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const rigRef = useRef<CameraRigHandle>(null);
   const sessionWords = useRef(new Set<string>()); // words added this session → animate
@@ -55,6 +63,12 @@ export default function App() {
   useEffect(() => {
     loadGraphData().then(setData, (err: Error) => setLoadError(err.message));
   }, []);
+
+  const wordIndex = useMemo(() => {
+    const m = new Map<string, number>();
+    if (data) data.words.forEach((w, i) => m.set(w.word, i));
+    return m;
+  }, [data]);
 
   // Restore previously added words (vec only is stored; the rest is derived).
   useEffect(() => {
@@ -123,7 +137,7 @@ export default function App() {
         rigRef.current?.flyTo(existing.position, 14);
         return;
       }
-      const seedIndex = data.words.findIndex((w) => w.word === word);
+      const seedIndex = wordIndex.get(word) ?? -1;
       if (seedIndex >= 0) {
         flyToIndex(seedIndex);
         return;
@@ -157,7 +171,62 @@ export default function App() {
         setBusy(false);
       }
     },
-    [data, busy, added, flyToIndex]
+    [data, busy, added, flyToIndex, wordIndex]
+  );
+
+  const runEquation = useCallback(
+    async (terms: Term[]) => {
+      if (!data || busy) return;
+      setBusy(true);
+      try {
+        const vecs = await resolveTermVecs(terms, data, wordIndex, added, async (words) => {
+          const res = await fetch('/api/embed', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ words }),
+          });
+          const body = (await res.json()) as {
+            embeddings?: { word: string; embedding: number[] }[];
+            error?: string;
+          };
+          if (!res.ok || !body.embeddings) {
+            throw new Error(body.error ?? 'Something went wrong — try again.');
+          }
+          return new Map(
+            body.embeddings.map((e) => [e.word, projectEmbedding(e.embedding, data)])
+          );
+        });
+        const result = combine(vecs, terms.map((t) => t.sign));
+        const candidates = equationNeighbors(result, data, terms.map((t) => t.word), 6);
+        if (candidates.length === 0) {
+          setToast('No good match for that equation.');
+          return;
+        }
+        setEquation({ terms, candidates, position: placeByNeighbors(candidates, data) });
+        setFocusIndex(null);
+        flyToIndex(candidates[0].index);
+      } catch (err) {
+        setToast(err instanceof Error ? err.message : 'Network error — is the API running?');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [data, busy, added, wordIndex, flyToIndex]
+  );
+
+  // Router: equations go to runEquation, plain words to addWord.
+  const handleSubmit = useCallback(
+    (raw: string) => {
+      setEquation(null);
+      try {
+        const terms = parseExpression(raw);
+        if (terms) runEquation(terms);
+        else addWord(raw);
+      } catch (err) {
+        setToast(err instanceof Error ? err.message : 'That equation didn\'t parse.');
+      }
+    },
+    [runEquation, addWord]
   );
 
   const removeWord = useCallback((word: string) => {
@@ -171,8 +240,9 @@ export default function App() {
     if (focusIndex !== null) set.add(focusIndex);
     const last = added[added.length - 1];
     if (last) for (const n of last.neighbors) set.add(n.index);
+    if (equation) for (const n of equation.candidates.slice(0, 5)) set.add(n.index);
     return [...set];
-  }, [focusIndex, added]);
+  }, [focusIndex, added, equation]);
 
   if (loadError) {
     return (
@@ -201,7 +271,10 @@ export default function App() {
             Sprite: {},
           },
         }}
-        onPointerMissed={() => setFocusIndex(null)}
+        onPointerMissed={() => {
+          setFocusIndex(null);
+          setEquation(null);
+        }}
       >
         <color attach="background" args={[SCENE_BACKGROUND]} />
         <fog attach="fog" args={[SCENE_BACKGROUND, 230, 1100]} />
@@ -223,6 +296,13 @@ export default function App() {
                 animate={sessionWords.current.has(a.word)}
               />
             ))}
+            {equation && (
+              <EquationMarker
+                position={equation.position}
+                candidates={equation.candidates}
+                data={data}
+              />
+            )}
             <GestureCursor
               cursor={gestureCursor}
               select={gestureSelect}
@@ -251,7 +331,16 @@ export default function App() {
         frameRef={gestures.frameRef}
         onToggle={gestures.toggle}
       />
-      <WordInput busy={busy} disabled={!data} onSubmit={addWord} />
+      <WordInput busy={busy} disabled={!data} onSubmit={handleSubmit} />
+      {equation && data && (
+        <EquationCard
+          terms={equation.terms}
+          candidates={equation.candidates}
+          words={data.words}
+          onSelect={flyToIndex}
+          onDismiss={() => setEquation(null)}
+        />
+      )}
       <AddedWords
         added={added}
         onSelect={(a) => rigRef.current?.flyTo(a.position, 14)}

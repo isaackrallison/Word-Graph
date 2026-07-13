@@ -4,6 +4,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { Billboard, Text } from '@react-three/drei';
 import type { GraphData } from '../lib/data';
 import { CLUSTER_COLORS } from '../lib/palette';
+import { greedyPlace, tier, type Rect } from '../lib/labelLayout';
 
 /**
  * Map-style label placement. Instead of "the 56 nearest words" (a wall of
@@ -22,16 +23,8 @@ const MAX_LABELS = 26;
 const CANDIDATES = 400;
 const MIN_PX = 10; // labels smaller than this are noise — skip
 const MAX_PX = 26; // …and larger than this dominate the view — cap
-const PAD_PX = 5; // breathing room between label rects
 const CHAR_ASPECT = 0.62; // approx glyph width / font size
 const BASE_FONT = 1.05; // world units
-
-/** Frequency boost: common words label earlier and slightly larger. */
-function tier(rank: number): number {
-  if (rank < 2_000) return 1.45;
-  if (rank < 20_000) return 1.15;
-  return 1.0;
-}
 
 interface LabelInfo {
   index: number;
@@ -45,16 +38,6 @@ interface LabelsProps {
   /** Word indices that must stay labeled (focused word, neighbors of a new word). */
   forced: number[];
 }
-
-interface Rect {
-  x0: number;
-  x1: number;
-  y0: number;
-  y1: number;
-}
-
-const overlaps = (a: Rect, b: Rect) =>
-  a.x0 < b.x1 + PAD_PX && a.x1 > b.x0 - PAD_PX && a.y0 < b.y1 + PAD_PX && a.y1 > b.y0 - PAD_PX;
 
 export function Labels({ data, hovered, forced }: LabelsProps) {
   const camera = useThree((s) => s.camera);
@@ -169,13 +152,7 @@ export function Labels({ data, hovered, forced }: LabelsProps) {
     }
 
     // --- 3. greedy non-overlapping placement, must-show first ---
-    candidates.sort((a, b) => Number(b.mustShow) - Number(a.mustShow) || b.score - a.score);
-    const accepted: Candidate[] = [];
-    for (const c of candidates) {
-      if (accepted.length >= MAX_LABELS && !c.mustShow) break;
-      if (!c.mustShow && accepted.some((a) => overlaps(a.rect, c.rect))) continue;
-      accepted.push(c);
-    }
+    const accepted = greedyPlace(candidates, MAX_LABELS);
 
     lastShown.current = new Set(accepted.map((c) => c.index));
 

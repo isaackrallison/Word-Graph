@@ -20,6 +20,13 @@ export async function embedWord(word: string): Promise<number[]> {
   return res.data[0].embedding;
 }
 
+/** Embed up to a few words in one call (word-algebra terms). */
+export async function embedWords(words: string[]): Promise<number[][]> {
+  const client = new OpenAI();
+  const res = await client.embeddings.create({ model: EMBED_MODEL, input: words });
+  return res.data.map((d) => d.embedding);
+}
+
 // Simple per-IP sliding-window rate limit (in-memory; resets on cold start).
 const hits = new Map<string, number[]>();
 export function rateLimited(ip: string, limit = 20, windowMs = 60_000): boolean {
