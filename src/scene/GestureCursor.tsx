@@ -43,7 +43,8 @@ export function GestureCursor({ cursor, select, onHover, onSelect }: GestureCurs
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const texture = useMemo(makeGlowTexture, []);
   const sprite = useRef<THREE.Sprite>(null);
-  const handledSeq = useRef(0);
+  // Seed with the current seq so a remount never replays a stale select.
+  const handledSeq = useRef(select?.seq ?? 0);
 
   // Hover + cursor dot placement.
   useEffect(() => {

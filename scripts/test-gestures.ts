@@ -178,6 +178,21 @@ function run(frames: { hands: HandData[]; dt?: number }[]): GestureEvent[] {
   );
 }
 
+// --- QUICK two-hand zoom released fast: must not fire selects ---
+{
+  const frames = [
+    { hands: [hand(0.45, 0.5, false), hand(0.55, 0.5, false)], dt: 30 },
+    { hands: [hand(0.44, 0.5, true), hand(0.56, 0.5, true)], dt: 30 },
+    { hands: [hand(0.43, 0.5, true), hand(0.57, 0.5, true)], dt: 30 },
+    { hands: [hand(0.42, 0.5, true), hand(0.58, 0.5, true)], dt: 30 },
+    // both release fast + barely moved — would look like two taps without the guard
+    { hands: [hand(0.42, 0.5, false), hand(0.58, 0.5, false)], dt: 30 },
+  ];
+  const ev = run(frames);
+  check('fast zoom release fires no selects', !ev.some((e) => e.type === 'select'));
+  check('fast zoom still dollied', ev.some((e) => e.type === 'dolly'));
+}
+
 // --- hand teleport (> MATCH_DIST): new track, no phantom tap ---
 {
   const frames = [

@@ -16,6 +16,7 @@ const TAP_MAX_MOVE = 0.02; // screen fraction
 const POS_ALPHA = 0.4; // EMA for pinch midpoint / hand position
 const CURSOR_ALPHA = 0.3; // heavier smoothing for the cursor
 const MATCH_DIST = 0.3; // max wrist travel between frames to keep hand identity
+const ZOOM_TAP_GUARD_MS = 400; // releasing a two-hand zoom must never read as a tap
 
 const dist2d = (a: Point3, b: Point3) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -39,6 +40,7 @@ export class GestureMachine {
   private tracked: TrackedHand[] = [];
   private state: GestureState = 'idle';
   private zoomPrevDist: number | null = null;
+  private lastZoomT = -Infinity;
   private emit: (e: GestureEvent) => void;
 
   constructor(emit: (e: GestureEvent) => void) {
@@ -97,8 +99,13 @@ export class GestureMachine {
           deltas.set(t, { dx, dy });
         }
         if (!t.pinching && wasPinching) {
-          // pinch released — was it a tap?
-          if (f.t - t.pinchStart < TAP_MAX_MS && t.pinchTravel < TAP_MAX_MOVE) {
+          // pinch released — was it a tap? (never when it ends a two-hand zoom,
+          // otherwise a quick spread/squeeze teleports the camera)
+          if (
+            f.t - t.pinchStart < TAP_MAX_MS &&
+            t.pinchTravel < TAP_MAX_MOVE &&
+            f.t - this.lastZoomT > ZOOM_TAP_GUARD_MS
+          ) {
             this.emit({ type: 'select', x: t.cursor.x, y: t.cursor.y });
           }
         }
@@ -128,6 +135,7 @@ export class GestureMachine {
         this.emit({ type: 'dolly', factor: this.zoomPrevDist / d });
       }
       this.zoomPrevDist = d;
+      this.lastZoomT = f.t;
       this.setState('zoom');
       this.emit({ type: 'cursorEnd' });
       return;

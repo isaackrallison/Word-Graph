@@ -24,7 +24,7 @@ export function WordInput({ busy, disabled, onSubmit }: WordInputProps) {
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder="type a word… or try: king - man + woman"
-        maxLength={40}
+        maxLength={80}
         disabled={disabled}
         autoComplete="off"
         autoCorrect="off"

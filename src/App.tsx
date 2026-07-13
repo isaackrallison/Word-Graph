@@ -56,7 +56,10 @@ export default function App() {
   const gestures = useGestures({
     onOrbit: (dx, dy) => rigRef.current?.orbitBy(dx * ORBIT_GAIN, dy * ORBIT_GAIN),
     onDolly: (f) => rigRef.current?.dollyBy(f),
-    onCursor: setGestureCursor,
+    onCursor: (pos) => {
+      if (pos) rigRef.current?.noteActivity(); // pointing counts as activity
+      setGestureCursor(pos);
+    },
     onSelect: ({ x, y }) => setGestureSelect({ seq: ++selectSeq.current, x, y }),
   });
 

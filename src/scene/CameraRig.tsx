@@ -14,6 +14,8 @@ export interface CameraRigHandle {
   orbitBy(dyaw: number, dpitch: number): void;
   /** Multiply the camera↔target distance (clamped to min/max). */
   dollyBy(factor: number): void;
+  /** Mark user activity (e.g. a hand cursor) so idle auto-rotate holds off. */
+  noteActivity(): void;
 }
 
 const IDLE_SECONDS = 14;
@@ -73,6 +75,9 @@ export const CameraRig = forwardRef<CameraRigHandle, CameraRigProps>(function Ca
         applySpherical((s) => {
           s.radius *= factor;
         });
+      },
+      noteActivity() {
+        lastInteraction.current = elapsed.current;
       },
     };
   });
