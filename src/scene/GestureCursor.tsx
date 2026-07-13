@@ -30,10 +30,16 @@ interface GestureCursorProps {
   onSelect(index: number): void;
 }
 
+/** Cursor dot size on screen, in pixels — kept constant regardless of how
+ *  close the hit point is to the camera (a fixed world size becomes a
+ *  screen-filling flash when the cursor lands on a nearby word). */
+const CURSOR_PX = 26;
+
 /** Drives hover/select from the gesture cursor via the same raycast the mouse
  *  uses, and renders a glowing cursor dot in the scene. */
 export function GestureCursor({ cursor, select, onHover, onSelect }: GestureCursorProps) {
   const { scene, camera } = useThree();
+  const viewport = useThree((s) => s.size);
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const texture = useMemo(makeGlowTexture, []);
   const sprite = useRef<THREE.Sprite>(null);
@@ -56,8 +62,13 @@ export function GestureCursor({ cursor, select, onHover, onSelect }: GestureCurs
           .copy(raycaster.ray.origin)
           .addScaledVector(raycaster.ray.direction, 40);
       }
+      // Constant screen size: scale the sprite with its camera distance.
+      const fov = (camera as THREE.PerspectiveCamera).fov ?? 55;
+      const ppu = viewport.height / (2 * Math.tan(THREE.MathUtils.degToRad(fov) / 2));
+      const d = sprite.current.position.distanceTo(camera.position);
+      sprite.current.scale.setScalar((CURSOR_PX / ppu) * d);
     }
-  }, [cursor, scene, camera, raycaster, onHover]);
+  }, [cursor, scene, camera, raycaster, onHover, viewport]);
 
   // Pinch-tap select.
   useEffect(() => {
@@ -69,7 +80,7 @@ export function GestureCursor({ cursor, select, onHover, onSelect }: GestureCurs
 
   if (!cursor) return null;
   return (
-    <sprite ref={sprite} scale={[2.2, 2.2, 1]}>
+    <sprite ref={sprite}>
       <spriteMaterial
         map={texture}
         color={ADDED_WORD_GLOW}

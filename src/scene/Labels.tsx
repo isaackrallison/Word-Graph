@@ -5,13 +5,38 @@ import { Billboard, Text } from '@react-three/drei';
 import type { GraphData } from '../lib/data';
 import { CLUSTER_COLORS } from '../lib/palette';
 
-const MAX_LABELS = 56;
-const REFRESH_SECONDS = 0.8;
+/**
+ * Map-style label placement. Instead of "the 56 nearest words" (a wall of
+ * overlapping text in a 100k cloud), each refresh:
+ *   1. collects the ~400 nearest in-front words,
+ *   2. scores them by on-screen size × word frequency (the word list is
+ *      frequency-ordered, so index = importance rank) with stickiness for
+ *      labels already showing,
+ *   3. greedily accepts labels whose projected screen rects don't overlap,
+ *      up to a hard cap.
+ * Result: a handful of readable, non-colliding labels, important words first.
+ */
+
+const REFRESH_SECONDS = 0.4;
+const MAX_LABELS = 26;
+const CANDIDATES = 400;
+const MIN_PX = 10; // labels smaller than this are noise — skip
+const MAX_PX = 26; // …and larger than this dominate the view — cap
+const PAD_PX = 5; // breathing room between label rects
+const CHAR_ASPECT = 0.62; // approx glyph width / font size
+const BASE_FONT = 1.05; // world units
+
+/** Frequency boost: common words label earlier and slightly larger. */
+function tier(rank: number): number {
+  if (rank < 2_000) return 1.45;
+  if (rank < 20_000) return 1.15;
+  return 1.0;
+}
 
 interface LabelInfo {
   index: number;
-  opacity: number;
-  size: number;
+  fontSize: number; // world units, quantized
+  opacity: number; // quantized
 }
 
 interface LabelsProps {
@@ -21,26 +46,38 @@ interface LabelsProps {
   forced: number[];
 }
 
-/**
- * Shows labels only for the words nearest the camera (plus hovered/forced
- * ones), with distance-based fade — all 1k labels at once would be unreadable.
- * Keyed by word index so persisting labels don't re-layout on refresh.
- */
+interface Rect {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
+const overlaps = (a: Rect, b: Rect) =>
+  a.x0 < b.x1 + PAD_PX && a.x1 > b.x0 - PAD_PX && a.y0 < b.y1 + PAD_PX && a.y1 > b.y0 - PAD_PX;
+
 export function Labels({ data, hovered, forced }: LabelsProps) {
   const camera = useThree((s) => s.camera);
+  const viewport = useThree((s) => s.size);
   const [visible, setVisible] = useState<LabelInfo[]>([]);
   const clock = useRef(0);
+  const lastShown = useRef(new Set<number>());
   const forwardVec = useMemo(() => new THREE.Vector3(), []);
   const toPoint = useMemo(() => new THREE.Vector3(), []);
+  const projVec = useMemo(() => new THREE.Vector3(), []);
 
   useFrame((_, delta) => {
     clock.current += delta;
     if (clock.current < REFRESH_SECONDS) return;
     clock.current = 0;
 
+    const { positions, count, words } = data;
+    const fov = (camera as THREE.PerspectiveCamera).fov ?? 55;
+    // px per world unit at distance 1
+    const ppu = viewport.height / (2 * Math.tan(THREE.MathUtils.degToRad(fov) / 2));
+
+    // --- 1. bounded top-k nearest in-front candidates (no full sort) ---
     camera.getWorldDirection(forwardVec);
-    const { positions, count } = data;
-    // Bounded top-k selection (no full sort — count can be 100k+).
     const nearest: { index: number; d2: number }[] = [];
     let worst = Infinity;
     for (let i = 0; i < count; i++) {
@@ -48,62 +85,116 @@ export function Labels({ data, hovered, forced }: LabelsProps) {
         .set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2])
         .sub(camera.position);
       const d2 = toPoint.lengthSq();
-      if (d2 >= worst && nearest.length >= MAX_LABELS) continue;
-      if (toPoint.dot(forwardVec) < 0) continue; // behind the camera
-      if (nearest.length < MAX_LABELS) {
+      if (d2 >= worst && nearest.length >= CANDIDATES) continue;
+      if (toPoint.dot(forwardVec) < 0) continue;
+      if (nearest.length < CANDIDATES) {
         nearest.push({ index: i, d2 });
-        if (nearest.length === MAX_LABELS) {
+        if (nearest.length === CANDIDATES) {
           nearest.sort((a, b) => a.d2 - b.d2);
-          worst = nearest[MAX_LABELS - 1].d2;
+          worst = nearest[CANDIDATES - 1].d2;
         }
       } else {
-        let k = MAX_LABELS - 1;
+        let k = CANDIDATES - 1;
         while (k > 0 && nearest[k - 1].d2 > d2) {
           nearest[k] = nearest[k - 1];
           k--;
         }
         nearest[k] = { index: i, d2 };
-        worst = nearest[MAX_LABELS - 1].d2;
+        worst = nearest[CANDIDATES - 1].d2;
       }
     }
 
-    const fadeRange = data.cloudRadius * 1.07;
-    const chosen = new Map<number, { opacity: number; size: number }>();
-    // Quantize to a coarse grid so a label whose distance barely changed keeps
-    // identical props — troika re-layouts on every fontSize change, and 56 of
-    // those per refresh is what kills the frame rate.
-    const q = (v: number) => Math.round(v * 10) / 10;
-    const entry = (d: number) => ({
-      // Fade with distance, and also fade OUT labels almost on top of the
-      // camera — in a 100k cloud they'd otherwise wallpaper the screen.
-      opacity: q(
-        THREE.MathUtils.clamp(1.4 - d / fadeRange, 0.18, 1) *
-          THREE.MathUtils.clamp(d / 6, 0.1, 1)
-      ),
-      // Shrink labels very close to the camera so they don't dominate the view.
-      size: q(THREE.MathUtils.clamp(d / 16, 0.3, 1)),
-    });
-    for (const { index, d2 } of nearest) {
-      chosen.set(index, entry(Math.sqrt(d2)));
+    // --- 2. score + screen-project the survivors ---
+    interface Candidate {
+      index: number;
+      fontSize: number;
+      opacity: number;
+      score: number;
+      rect: Rect;
+      mustShow: boolean;
     }
-    const dist = (i: number) =>
-      toPoint
-        .set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2])
-        .sub(camera.position)
-        .length();
-    for (const f of forced) chosen.set(f, { ...entry(dist(f)), opacity: 1 });
-    if (hovered !== null) chosen.set(hovered, { ...entry(dist(hovered)), opacity: 1 });
+    const mustShow = new Set<number>(forced);
+    if (hovered !== null) mustShow.add(hovered);
 
-    const next = [...chosen.entries()]
-      .map(([index, { opacity, size }]) => ({ index, opacity, size }))
+    const project = (index: number, must: boolean): Candidate | null => {
+      const d = Math.hypot(
+        positions[index * 3] - camera.position.x,
+        positions[index * 3 + 1] - camera.position.y,
+        positions[index * 3 + 2] - camera.position.z
+      );
+      if (d < 1e-3) return null;
+      let fontSize = BASE_FONT * tier(index) * (must ? 1.3 : 1);
+      let px = (fontSize * ppu) / d;
+      if (px > MAX_PX) {
+        fontSize *= MAX_PX / px;
+        px = MAX_PX;
+      }
+      if (must && px < 12) {
+        fontSize *= 12 / px;
+        px = 12;
+      }
+      if (px < MIN_PX) return null;
+
+      projVec.set(positions[index * 3], positions[index * 3 + 1], positions[index * 3 + 2]);
+      projVec.project(camera);
+      if (projVec.z > 1) return null; // behind
+      const sx = (projVec.x * 0.5 + 0.5) * viewport.width;
+      const sy = (1 - (projVec.y * 0.5 + 0.5)) * viewport.height;
+      const w = px * CHAR_ASPECT * words[index].word.length;
+      const rect: Rect = { x0: sx - w / 2, x1: sx + w / 2, y0: sy - px * 1.6, y1: sy };
+      if (rect.x1 < 0 || rect.x0 > viewport.width || rect.y1 < 0 || rect.y0 > viewport.height) {
+        return null; // fully off-screen
+      }
+
+      const sticky = lastShown.current.has(index) ? 1.35 : 1;
+      return {
+        index,
+        fontSize,
+        opacity: THREE.MathUtils.clamp((px - MIN_PX) / 9 + 0.35, 0.35, 0.95),
+        score: px * tier(index) * sticky,
+        rect,
+        mustShow: must,
+      };
+    };
+
+    const candidates: Candidate[] = [];
+    for (const index of mustShow) {
+      const c = project(index, true);
+      if (c) candidates.push(c);
+    }
+    for (const { index } of nearest) {
+      if (mustShow.has(index)) continue;
+      const c = project(index, false);
+      if (c) candidates.push(c);
+    }
+
+    // --- 3. greedy non-overlapping placement, must-show first ---
+    candidates.sort((a, b) => Number(b.mustShow) - Number(a.mustShow) || b.score - a.score);
+    const accepted: Candidate[] = [];
+    for (const c of candidates) {
+      if (accepted.length >= MAX_LABELS && !c.mustShow) break;
+      if (!c.mustShow && accepted.some((a) => overlaps(a.rect, c.rect))) continue;
+      accepted.push(c);
+    }
+
+    lastShown.current = new Set(accepted.map((c) => c.index));
+
+    const q = (v: number) => Math.round(v * 10) / 10;
+    const next = accepted
+      .map((c) => ({
+        index: c.index,
+        fontSize: q(c.fontSize),
+        opacity: c.mustShow ? 1 : q(c.opacity),
+      }))
       .sort((a, b) => a.index - b.index);
+
     setVisible((prev) =>
       prev.length === next.length &&
       prev.every(
         (p, i) =>
           p.index === next[i].index &&
-          p.opacity === next[i].opacity &&
-          p.size === next[i].size
+          p.fontSize === next[i].fontSize &&
+          p.opacity === next[i].opacity
       )
         ? prev // unchanged — skip the React re-render entirely
         : next
@@ -112,16 +203,16 @@ export function Labels({ data, hovered, forced }: LabelsProps) {
 
   return (
     <>
-      {visible.map(({ index, opacity, size }) => (
+      {visible.map(({ index, fontSize, opacity }) => (
         <LabelItem
           key={index}
           word={data.words[index].word}
           x={data.positions[index * 3]}
-          y={data.positions[index * 3 + 1] + 1.0}
+          y={data.positions[index * 3 + 1] + 0.6}
           z={data.positions[index * 3 + 2]}
           color={CLUSTER_COLORS[data.words[index].cluster % CLUSTER_COLORS.length]}
           opacity={opacity}
-          size={size}
+          fontSize={fontSize}
           emphasized={index === hovered || forced.includes(index)}
         />
       ))}
@@ -138,7 +229,7 @@ const LabelItem = memo(function LabelItem({
   z,
   color,
   opacity,
-  size,
+  fontSize,
   emphasized,
 }: {
   word: string;
@@ -147,15 +238,15 @@ const LabelItem = memo(function LabelItem({
   z: number;
   color: string;
   opacity: number;
-  size: number;
+  fontSize: number;
   emphasized: boolean;
 }) {
   return (
     <Billboard position={[x, y, z]}>
       <Text
-        fontSize={(emphasized ? 1.5 : 1.05) * size}
+        fontSize={fontSize}
         color={emphasized ? '#ffffff' : color}
-        fillOpacity={emphasized ? 1 : opacity}
+        fillOpacity={opacity}
         anchorX="center"
         anchorY="bottom"
         outlineWidth={emphasized ? 0.045 : 0}

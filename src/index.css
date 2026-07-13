@@ -284,6 +284,60 @@ body {
   max-width: 224px;
 }
 
+.gesture-help {
+  max-width: 264px;
+}
+
+.gesture-help-toggle {
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.gesture-help-toggle:hover {
+  color: var(--ink);
+}
+
+.gesture-help-list {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  backdrop-filter: blur(12px);
+}
+
+.gesture-help-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+
+.gesture-help-list strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.gesture-help-icon {
+  flex: none;
+  width: 30px;
+  text-align: center;
+  font-size: 15px;
+}
+
 /* ---------- states ---------- */
 
 .overlay-screen {

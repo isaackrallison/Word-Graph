@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import type { GestureState, HandFrame } from '../gesture/types';
 import { isMockHand } from '../gesture/useGestures';
 
@@ -76,6 +76,7 @@ export function GesturePanel({
 
   return (
     <div className="gesture-panel">
+      <GestureHelp enabled={enabled} />
       {enabled && !isMockHand() && (
         <div className="gesture-preview">
           {/* landmarks are pre-mirrored, so mirror the video to match */}
@@ -94,6 +95,51 @@ export function GesturePanel({
         {starting ? 'starting camera…' : enabled ? '✕ stop gestures' : '✋ enable gestures'}
       </button>
       {error && <p className="gesture-error">{error}</p>}
+    </div>
+  );
+}
+
+const GESTURE_GUIDE: { icon: string; name: string; how: string }[] = [
+  { icon: '✋', name: 'open hand', how: 'moves the cursor — hover a word to light it up' },
+  { icon: '🤏', name: 'pinch + move', how: 'grab space and drag to spin the galaxy' },
+  { icon: '🤏', name: 'quick pinch tap', how: 'select the word under the cursor and fly to it' },
+  { icon: '🤏🤏', name: 'two hands, spread / squeeze', how: 'zoom in and out' },
+];
+
+/** Expandable cheat-sheet for the gesture vocabulary. Collapsed by default;
+ *  pops open the first time gestures are enabled in a session. */
+function GestureHelp({ enabled }: { enabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  const autoOpened = useRef(false);
+
+  useEffect(() => {
+    if (enabled && !autoOpened.current) {
+      autoOpened.current = true;
+      setOpen(true);
+    }
+  }, [enabled]);
+
+  return (
+    <div className="gesture-help">
+      <button
+        className="gesture-help-toggle"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        {open ? '▾' : '▸'} hand gestures
+      </button>
+      {open && (
+        <ul className="gesture-help-list">
+          {GESTURE_GUIDE.map((g) => (
+            <li key={g.name}>
+              <span className="gesture-help-icon">{g.icon}</span>
+              <span>
+                <strong>{g.name}</strong> — {g.how}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
