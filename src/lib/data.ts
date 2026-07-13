@@ -19,28 +19,56 @@ export interface GraphData {
   cloudRadius: number; // scene half-extent the layout is normalized to
 }
 
-async function fetchBuffer(url: string): Promise<ArrayBuffer> {
+async function fetchBuffer(url: string, onChunk?: (bytes: number) => void): Promise<ArrayBuffer> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`failed to load ${url}: ${res.status}`);
-  return res.arrayBuffer();
+  if (!res.body || !onChunk) return res.arrayBuffer();
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    total += value.length;
+    onChunk(value.length);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.length;
+  }
+  return out.buffer;
 }
 
-export async function loadGraphData(): Promise<GraphData> {
-  const [meta, wordsRaw, coordsBuf, projBuf, layoutBuf] = await Promise.all([
-    fetch('/data/meta.json').then((r) => r.json()),
-    fetch('/data/words.json').then((r) => r.json()) as Promise<{ w: string; c: number }[]>,
-    fetchBuffer('/data/coords.i16'),
-    fetchBuffer('/data/projection.bin'),
-    fetchBuffer('/data/layout.f32'),
-  ]);
-
-  const { dims, pcaDims, count, coordScales, cloudRadius } = meta as {
+export async function loadGraphData(
+  onProgress?: (fraction: number) => void
+): Promise<GraphData> {
+  const meta = (await fetch('/data/meta.json').then((r) => r.json())) as {
     dims: number;
     pcaDims: number;
     count: number;
     coordScales: number[];
     cloudRadius: number;
   };
+  const { dims, pcaDims, count, coordScales, cloudRadius } = meta;
+
+  // Expected byte totals are known from meta — drive a real progress bar for
+  // the big binary files (words.json is a rounding error next to coords.i16).
+  const totalBytes = count * pcaDims * 2 + count * 3 * 4 + (dims + pcaDims * dims) * 4;
+  let received = 0;
+  const onChunk = (bytes: number) => {
+    received += bytes;
+    onProgress?.(Math.min(received / totalBytes, 1));
+  };
+
+  const [wordsRaw, coordsBuf, projBuf, layoutBuf] = await Promise.all([
+    fetch('/data/words.json').then((r) => r.json()) as Promise<{ w: string; c: number }[]>,
+    fetchBuffer('/data/coords.i16', onChunk),
+    fetchBuffer('/data/projection.bin', onChunk),
+    fetchBuffer('/data/layout.f32', onChunk),
+  ]);
   const quant = new Int16Array(coordsBuf);
   const proj = new Float32Array(projBuf);
   const positions = new Float32Array(layoutBuf);

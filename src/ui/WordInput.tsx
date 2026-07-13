@@ -4,9 +4,10 @@ interface WordInputProps {
   busy: boolean;
   disabled: boolean;
   onSubmit: (word: string) => void;
+  onRandom: () => void;
 }
 
-export function WordInput({ busy, disabled, onSubmit }: WordInputProps) {
+export function WordInput({ busy, disabled, onSubmit, onRandom }: WordInputProps) {
   const [value, setValue] = useState('');
 
   return (
@@ -26,6 +27,10 @@ export function WordInput({ busy, disabled, onSubmit }: WordInputProps) {
         placeholder="type a word… or try: king - man + woman"
         maxLength={80}
         disabled={disabled}
+        autoFocus
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') setValue('');
+        }}
         autoComplete="off"
         autoCorrect="off"
         spellCheck={false}
@@ -33,6 +38,16 @@ export function WordInput({ busy, disabled, onSubmit }: WordInputProps) {
       />
       <button type="submit" disabled={disabled || busy || !value.trim()}>
         {busy ? 'placing…' : 'add'}
+      </button>
+      <button
+        type="button"
+        className="random-btn"
+        onClick={onRandom}
+        disabled={disabled}
+        title="fly to a random word"
+        aria-label="fly to a random word"
+      >
+        🎲
       </button>
     </form>
   );

@@ -34,6 +34,7 @@ function spawnFor(position: [number, number, number]): [number, number, number] 
 export default function App() {
   const [data, setData] = useState<GraphData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadProgress, setLoadProgress] = useState(0);
   const [hovered, setHovered] = useState<number | null>(null);
   const [added, setAdded] = useState<AddedWord[]>([]);
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
@@ -64,7 +65,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    loadGraphData().then(setData, (err: Error) => setLoadError(err.message));
+    loadGraphData(setLoadProgress).then(setData, (err: Error) => setLoadError(err.message));
   }, []);
 
   const wordIndex = useMemo(() => {
@@ -334,7 +335,16 @@ export default function App() {
         frameRef={gestures.frameRef}
         onToggle={gestures.toggle}
       />
-      <WordInput busy={busy} disabled={!data} onSubmit={handleSubmit} />
+      <WordInput
+        busy={busy}
+        disabled={!data}
+        onSubmit={handleSubmit}
+        onRandom={() => {
+          if (!data) return;
+          // random from the recognizable half of the frequency list
+          flyToIndex(Math.floor(Math.random() * Math.min(20000, data.count)));
+        }}
+      />
       {equation && data && (
         <EquationCard
           terms={equation.terms}
@@ -353,7 +363,11 @@ export default function App() {
       {!data && !loadError && (
         <div className="overlay-screen">
           <h1>Word Galaxy</h1>
-          <p>loading the galaxy…</p>
+          <p>loading 100,000 words…</p>
+          <div className="load-bar">
+            <div className="load-bar-fill" style={{ width: `${Math.round(loadProgress * 100)}%` }} />
+          </div>
+          <p className="load-pct">{Math.round(loadProgress * 100)}%</p>
         </div>
       )}
       {toast && <div className="toast">{toast}</div>}

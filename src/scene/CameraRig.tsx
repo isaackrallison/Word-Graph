@@ -19,6 +19,9 @@ export interface CameraRigHandle {
 }
 
 const IDLE_SECONDS = 14;
+const REDUCED_MOTION =
+  typeof window !== 'undefined' &&
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 const MIN_DISTANCE = 4;
 const MAX_DISTANCE = 520;
 
@@ -95,7 +98,9 @@ export const CameraRig = forwardRef<CameraRigHandle, CameraRigProps>(function Ca
     }
 
     controls.autoRotate =
-      !dragging.current && elapsed.current - lastInteraction.current > IDLE_SECONDS;
+      !REDUCED_MOTION &&
+      !dragging.current &&
+      elapsed.current - lastInteraction.current > IDLE_SECONDS;
     controls.update();
   });
 
@@ -106,8 +111,8 @@ export const CameraRig = forwardRef<CameraRigHandle, CameraRigProps>(function Ca
       enableDamping
       dampingFactor={0.08}
       rotateSpeed={0.6}
-      minDistance={4}
-      maxDistance={220}
+      minDistance={MIN_DISTANCE}
+      maxDistance={MAX_DISTANCE}
       autoRotateSpeed={0.35}
       onStart={() => {
         dragging.current = true;
