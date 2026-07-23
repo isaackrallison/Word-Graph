@@ -11,6 +11,7 @@ import { CameraRig, type CameraRigHandle } from './scene/CameraRig';
 import { NewWord } from './scene/NewWord';
 import { Effects, Starfield } from './scene/Effects';
 import { EquationMarker } from './scene/EquationMarker';
+import { NeighborLinks } from './scene/NeighborLinks';
 import { GestureCursor } from './scene/GestureCursor';
 import { isMockHand, useGestures } from './gesture/useGestures';
 import { WordInput } from './ui/WordInput';
@@ -238,15 +239,24 @@ export default function App() {
     sessionWords.current.delete(word);
   }, []);
 
-  // Labels that must stay visible: focused word + the latest word's neighbors.
+  // True top-10 PCA-192 neighbors of the focused seed word (for the link overlay).
+  // Uses the word's own stored coords as the query; excludes itself.
+  const focusNeighbors = useMemo<Neighbor[]>(() => {
+    if (!data || focusIndex === null) return [];
+    const vec = data.coords.subarray(focusIndex * data.pcaDims, (focusIndex + 1) * data.pcaDims);
+    return nearestNeighbors(vec, data, 11).filter((n) => n.index !== focusIndex).slice(0, 10);
+  }, [data, focusIndex]);
+
+  // Labels that must stay visible: focused word + its neighbors + latest word's neighbors.
   const forced = useMemo(() => {
     const set = new Set<number>();
     if (focusIndex !== null) set.add(focusIndex);
+    for (const n of focusNeighbors) set.add(n.index);
     const last = added[added.length - 1];
     if (last) for (const n of last.neighbors) set.add(n.index);
     if (equation) for (const n of equation.candidates.slice(0, 5)) set.add(n.index);
     return [...set];
-  }, [focusIndex, added, equation]);
+  }, [focusIndex, focusNeighbors, added, equation]);
 
   if (loadError) {
     return (
@@ -281,7 +291,9 @@ export default function App() {
         }}
       >
         <color attach="background" args={[SCENE_BACKGROUND]} />
-        <fog attach="fog" args={[SCENE_BACKGROUND, 230, 1100]} />
+        {/* Depth fog: near pulled in so the ~200-unit-deep cloud gets a real
+            front-to-back gradient (depth cue against 3-D occlusion). */}
+        <fog attach="fog" args={[SCENE_BACKGROUND, 130, 1000]} />
         <Starfield />
         {data && (
           <>
@@ -300,6 +312,9 @@ export default function App() {
                 animate={sessionWords.current.has(a.word)}
               />
             ))}
+            {focusIndex !== null && focusNeighbors.length > 0 && (
+              <NeighborLinks focus={focusIndex} neighbors={focusNeighbors} data={data} />
+            )}
             {equation && (
               <EquationMarker
                 position={equation.position}
