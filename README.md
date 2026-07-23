@@ -36,9 +36,15 @@ Vite dev server automatically, so `npm run dev` is all you need locally.
 ## Using it
 
 - **drag** to orbit · **scroll** to zoom · **click** a word to fly to it
+- **click a word** to see gold links to its true top-10 semantic neighbors
+  (wherever the 3-D layout scattered them)
+- **zoom out** for a map: ~36 constellation region names fade in; dive in and
+  per-word labels take over
 - type a word — known words are visited, novel words are embedded live and
   placed at their semantic position with lines to their nearest neighbors
 - type an equation like `king - man + woman`
+- draw a **star trail** between two words: `cat -> democracy` (or `cat to
+  democracy`) steps through the words along the line between them
 - **✋ enable gestures**: open hand = cursor, pinch-drag = orbit, quick
   pinch-tap = select, two-hand pinch spread/squeeze = zoom
 - `?mockhand=1` simulates a hand with the mouse (click = pinch, shift =
@@ -56,6 +62,21 @@ Debug URL flags: `?nolabels=1`, `?nocloud=1`, `?noeffects=1` (perf bisection).
 `scripts/analyze-compression.py` reproduces the PCA-dimension fidelity
 measurements (needs the local embeddings cache in `scripts/.cache/`).
 
+### Layout quality
+
+The 3-D layout is scored, not guessed. `scripts/eval_layout.py` reports top-k
+neighbor recall (full-N), trustworthiness/continuity, and an R_NX AUC for any
+`layout.f32` against the PCA-192 space; `scripts/compare_layouts.py` bakes off
+candidate reducers. That bake-off is why the layout uses UMAP with
+`n_neighbors=10, min_dist=0.05` (recall@10 ≈ 44%, up from 38%) — PaCMAP and
+densMAP both scored worse in 3-D. The shipped recall is persisted to
+`meta.json` as `recall10_3d`.
+
+```sh
+./.venv/bin/python scripts/eval_layout.py            # score public/data/layout.f32
+./.venv/bin/python scripts/make_regions.py           # regenerate region labels only
+```
+
 ## Data pipeline
 
 ```
@@ -63,8 +84,11 @@ realwords.py    is_real_word() — Hunspell (en_US) spell-check, keeps inflectio
 wordlist.py     wordfreq candidates → real-word filter → scripts/wordlist.txt
 embed.ts        OpenAI embeddings → scripts/.cache/embeddings.f32 (resumable)
 reduce.py       filter cache to wordlist.txt · PCA-192 (+ int16 quantization)
-                · k-means-8 colors · UMAP-3D layout
-                → public/data/{words.json, coords.i16, layout.f32, projection.bin, meta.json}
+                · k-means-8 colors · UMAP-3D layout · region anchors
+                → public/data/{words.json, coords.i16, layout.f32,
+                  projection.bin, regions.json, meta.json}
+regions_util.py compute_regions() — k-means on the 3-D layout, named by most
+                frequent content word (shared by reduce.py + make_regions.py)
 ```
 
 Positions come from UMAP (neighbor-faithful, not variance-faithful); the
