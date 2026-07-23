@@ -3,6 +3,7 @@ import { Canvas } from '@react-three/fiber';
 import { loadGraphData, type GraphData } from './lib/data';
 import { nearestNeighbors, placeByNeighbors, projectEmbedding, type Neighbor } from './lib/project';
 import { combine, equationNeighbors, parseExpression, resolveTermVecs, type Term } from './lib/algebra';
+import { parsePathExpression, semanticPath } from './lib/path';
 import { SCENE_BACKGROUND } from './lib/palette';
 import type { AddedWord } from './types';
 import { WordCloud } from './scene/WordCloud';
@@ -18,6 +19,8 @@ import { isMockHand, useGestures } from './gesture/useGestures';
 import { WordInput } from './ui/WordInput';
 import { AddedWords } from './ui/AddedWords';
 import { EquationCard } from './ui/EquationCard';
+import { PathCard } from './ui/PathCard';
+import { PathTrail } from './scene/PathTrail';
 import { GesturePanel } from './ui/GesturePanel';
 
 const ORBIT_GAIN = 3.5; // screen-fraction pinch-drag → radians
@@ -46,6 +49,7 @@ export default function App() {
     candidates: Neighbor[];
     position: [number, number, number];
   } | null>(null);
+  const [trail, setTrail] = useState<{ path: number[] } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const rigRef = useRef<CameraRigHandle>(null);
   const sessionWords = useRef(new Set<string>()); // words added this session → animate
@@ -220,10 +224,45 @@ export default function App() {
     [data, busy, added, wordIndex, flyToIndex]
   );
 
-  // Router: equations go to runEquation, plain words to addWord.
+  // Semantic "star trail": bridge two seed words by stepping through the words
+  // along the line between their vectors in PCA space.
+  const runPath = useCallback(
+    (from: string, to: string) => {
+      if (!data) return;
+      const fi = wordIndex.get(from);
+      const ti = wordIndex.get(to);
+      if (fi === undefined || ti === undefined) {
+        const missing = fi === undefined ? from : to;
+        setToast(`"${missing}" isn't in the galaxy — trails connect two known words.`);
+        return;
+      }
+      const fromVec = data.coords.subarray(fi * data.pcaDims, (fi + 1) * data.pcaDims);
+      const toVec = data.coords.subarray(ti * data.pcaDims, (ti + 1) * data.pcaDims);
+      const path = semanticPath(fromVec, toVec, data);
+      if (path.length < 2) {
+        setToast('Couldn\'t find a path between those words.');
+        return;
+      }
+      setFocusIndex(null);
+      setTrail({ path });
+      rigRef.current?.flyTo(
+        [data.positions[fi * 3], data.positions[fi * 3 + 1], data.positions[fi * 3 + 2]],
+        55
+      );
+    },
+    [data, wordIndex]
+  );
+
+  // Router: "a -> b" trails, equations, then plain words.
   const handleSubmit = useCallback(
     (raw: string) => {
       setEquation(null);
+      setTrail(null);
+      const pair = parsePathExpression(raw);
+      if (pair) {
+        runPath(pair[0], pair[1]);
+        return;
+      }
       try {
         const terms = parseExpression(raw);
         if (terms) runEquation(terms);
@@ -232,7 +271,7 @@ export default function App() {
         setToast(err instanceof Error ? err.message : 'That equation didn\'t parse.');
       }
     },
-    [runEquation, addWord]
+    [runEquation, addWord, runPath]
   );
 
   const removeWord = useCallback((word: string) => {
@@ -256,8 +295,9 @@ export default function App() {
     const last = added[added.length - 1];
     if (last) for (const n of last.neighbors) set.add(n.index);
     if (equation) for (const n of equation.candidates.slice(0, 5)) set.add(n.index);
+    if (trail) for (const i of trail.path) set.add(i);
     return [...set];
-  }, [focusIndex, focusNeighbors, added, equation]);
+  }, [focusIndex, focusNeighbors, added, equation, trail]);
 
   if (loadError) {
     return (
@@ -289,6 +329,7 @@ export default function App() {
         onPointerMissed={() => {
           setFocusIndex(null);
           setEquation(null);
+          setTrail(null);
         }}
       >
         <color attach="background" args={[SCENE_BACKGROUND]} />
@@ -326,6 +367,7 @@ export default function App() {
                 data={data}
               />
             )}
+            {trail && <PathTrail path={trail.path} data={data} />}
             <GestureCursor
               cursor={gestureCursor}
               select={gestureSelect}
@@ -343,7 +385,10 @@ export default function App() {
         <p>100,000 words embedded by an LLM, arranged in 3-D with UMAP</p>
       </header>
 
-      <p className="hint">drag to orbit · scroll to zoom · click a word to visit it</p>
+      <p className="hint">
+        drag to orbit · scroll to zoom · click a word · try <code>king - man + woman</code> or{' '}
+        <code>cat -&gt; democracy</code>
+      </p>
 
       <GesturePanel
         enabled={gestures.enabled}
@@ -371,6 +416,14 @@ export default function App() {
           words={data.words}
           onSelect={flyToIndex}
           onDismiss={() => setEquation(null)}
+        />
+      )}
+      {trail && data && (
+        <PathCard
+          path={trail.path}
+          words={data.words}
+          onSelect={flyToIndex}
+          onDismiss={() => setTrail(null)}
         />
       )}
       <AddedWords

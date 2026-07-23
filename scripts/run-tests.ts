@@ -5,6 +5,7 @@ const SUITES = [
   'test-gestures.ts',
   'test-algebra.ts',
   'test-project.ts',
+  'test-path.ts',
   'test-labels.ts',
   'test-api.ts',
   'test-data-files.ts',

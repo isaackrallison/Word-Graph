@@ -35,6 +35,7 @@ function makeData(): GraphData {
     components,
     positions,
     cloudRadius: 50,
+    regions: [],
   };
 }
 const data = makeData();
