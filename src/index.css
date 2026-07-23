@@ -72,6 +72,43 @@ body {
   user-select: none;
 }
 
+/* ---------- label-mode toggle ---------- */
+
+.label-toggle {
+  position: absolute;
+  top: 62px;
+  left: 24px;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  backdrop-filter: blur(12px);
+}
+
+.label-toggle button {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink-muted);
+  background: transparent;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.label-toggle button:hover {
+  color: var(--ink);
+}
+
+.label-toggle button.active {
+  color: var(--bg);
+  background: var(--accent);
+  font-weight: 600;
+}
+
 /* ---------- word input ---------- */
 
 .word-input {

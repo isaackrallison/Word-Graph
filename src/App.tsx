@@ -51,6 +51,7 @@ export default function App() {
   } | null>(null);
   const [trail, setTrail] = useState<{ path: number[] } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [labelMode, setLabelMode] = useState<'words' | 'regions'>('words');
   const rigRef = useRef<CameraRigHandle>(null);
   const sessionWords = useRef(new Set<string>()); // words added this session → animate
   const restored = useRef(false);
@@ -91,7 +92,7 @@ export default function App() {
       }[];
       setAdded(
         saved
-          .filter((s) => Array.isArray(s.vec) && s.vec.length === data.pcaDims)
+          .filter((s) => Array.isArray(s.vec) && s.vec.length === data.dims)
           .map(({ word, vec }) => {
             const v = new Float32Array(vec);
             const neighbors = nearestNeighbors(v, data, 5).map((n) => ({
@@ -236,8 +237,8 @@ export default function App() {
         setToast(`"${missing}" isn't in the galaxy — trails connect two known words.`);
         return;
       }
-      const fromVec = data.coords.subarray(fi * data.pcaDims, (fi + 1) * data.pcaDims);
-      const toVec = data.coords.subarray(ti * data.pcaDims, (ti + 1) * data.pcaDims);
+      const fromVec = data.coords.subarray(fi * data.dims, (fi + 1) * data.dims);
+      const toVec = data.coords.subarray(ti * data.dims, (ti + 1) * data.dims);
       const path = semanticPath(fromVec, toVec, data);
       if (path.length < 2) {
         setToast('Couldn\'t find a path between those words.');
@@ -283,7 +284,7 @@ export default function App() {
   // Uses the word's own stored coords as the query; excludes itself.
   const focusNeighbors = useMemo<Neighbor[]>(() => {
     if (!data || focusIndex === null) return [];
-    const vec = data.coords.subarray(focusIndex * data.pcaDims, (focusIndex + 1) * data.pcaDims);
+    const vec = data.coords.subarray(focusIndex * data.dims, (focusIndex + 1) * data.dims);
     return nearestNeighbors(vec, data, 11).filter((n) => n.index !== focusIndex).slice(0, 10);
   }, [data, focusIndex]);
 
@@ -344,8 +345,13 @@ export default function App() {
             )}
             {!debugFlags.has('nolabels') && (
               <>
-                <RegionLabels data={data} />
-                <Labels data={data} hovered={hovered} forced={forced} />
+                {labelMode === 'regions' && data.regions.length > 0 && <RegionLabels data={data} />}
+                <Labels
+                  data={data}
+                  hovered={hovered}
+                  forced={forced}
+                  ambient={labelMode === 'words'}
+                />
               </>
             )}
             {added.map((a) => (
@@ -389,6 +395,23 @@ export default function App() {
         drag to orbit · scroll to zoom · click a word · try <code>king - man + woman</code> or{' '}
         <code>cat -&gt; democracy</code>
       </p>
+
+      {data && data.regions.length > 0 && (
+        <div className="label-toggle" role="group" aria-label="label mode">
+          <button
+            className={labelMode === 'words' ? 'active' : ''}
+            onClick={() => setLabelMode('words')}
+          >
+            Words
+          </button>
+          <button
+            className={labelMode === 'regions' ? 'active' : ''}
+            onClick={() => setLabelMode('regions')}
+          >
+            Regions
+          </button>
+        </div>
+      )}
 
       <GesturePanel
         enabled={gestures.enabled}

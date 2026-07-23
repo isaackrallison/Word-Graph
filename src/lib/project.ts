@@ -1,20 +1,14 @@
 // Project a raw embedding into the precomputed PCA space and find neighbors.
 import type { GraphData } from './data';
 
-/** (embedding - mean) x componentsᵀ → pcaDims coords, same basis as the seeds. */
+/**
+ * Coords are the raw word2vec vectors (no PCA), and /api/embed returns vectors
+ * from the same word2vec table — so projection is the identity. Kept as a
+ * function so callers stay agnostic to whether a reduction is in play.
+ */
 export function projectEmbedding(embedding: number[], data: GraphData): Float32Array {
-  const { dims, pcaDims, mean, components } = data;
-  if (embedding.length !== dims) throw new Error(`expected ${dims}-dim embedding`);
-  const centered = new Float32Array(dims);
-  for (let j = 0; j < dims; j++) centered[j] = embedding[j] - mean[j];
-  const out = new Float32Array(pcaDims);
-  for (let i = 0; i < pcaDims; i++) {
-    let dot = 0;
-    const row = i * dims;
-    for (let j = 0; j < dims; j++) dot += components[row + j] * centered[j];
-    out[i] = dot;
-  }
-  return out;
+  if (embedding.length !== data.dims) throw new Error(`expected ${data.dims}-dim embedding`);
+  return Float32Array.from(embedding);
 }
 
 export interface Neighbor {
@@ -46,19 +40,19 @@ export function placeByNeighbors(neighbors: Neighbor[], data: GraphData): [numbe
   return pos;
 }
 
-/** Top-k seed words by cosine similarity in the full pcaDims space. */
+/** Top-k seed words by cosine similarity in the raw word2vec space. */
 export function nearestNeighbors(vec: Float32Array, data: GraphData, k = 5): Neighbor[] {
-  const { coords, pcaDims, count } = data;
+  const { coords, dims, count } = data;
   let vn = 0;
-  for (let j = 0; j < pcaDims; j++) vn += vec[j] * vec[j];
+  for (let j = 0; j < dims; j++) vn += vec[j] * vec[j];
   vn = Math.sqrt(vn) || 1;
 
   const best: Neighbor[] = [];
   for (let i = 0; i < count; i++) {
     let dot = 0;
     let rn = 0;
-    const row = i * pcaDims;
-    for (let j = 0; j < pcaDims; j++) {
+    const row = i * dims;
+    for (let j = 0; j < dims; j++) {
       dot += coords[row + j] * vec[j];
       rn += coords[row + j] * coords[row + j];
     }

@@ -64,10 +64,7 @@ function throws(fn: () => unknown): boolean {
     words: words.map((w) => ({ word: w, cluster: 0 })),
     count: 6,
     dims: 2,
-    pcaDims: 2,
     coords,
-    mean: new Float32Array(2),
-    components: new Float32Array(4),
     positions: new Float32Array(18),
     cloudRadius: 1,
   } as GraphData;

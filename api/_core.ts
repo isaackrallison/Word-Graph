@@ -1,8 +1,22 @@
 // Shared logic for the embed endpoint — used by both the Vercel function
 // (api/embed.ts) and the Vite dev-server middleware (vite.config.ts).
-import OpenAI from 'openai';
+//
+// Embeddings come from a local word2vec lookup store (api/w2v/, built by
+// scripts/embed_word2vec.py) — no API key, no network. word2vec is a fixed
+// dictionary, so a word outside the shipped vocab has no vector: we surface
+// that as OutOfVocabError rather than inventing one (no subword fallback).
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-export const EMBED_MODEL = 'text-embedding-3-small';
+export const EMBED_MODEL = 'word2vec-google-news-300';
+
+/** Thrown when a word isn't in the word2vec vocabulary. */
+export class OutOfVocabError extends Error {
+  constructor(public word: string) {
+    super(`"${word}" isn't in the word2vec vocabulary.`);
+    this.name = 'OutOfVocabError';
+  }
+}
 
 /** Normalize and validate user input: 1-3 lowercase words, letters/hyphens/apostrophes. */
 export function validateWord(input: unknown): string | null {
@@ -14,17 +28,53 @@ export function validateWord(input: unknown): string | null {
   return word;
 }
 
-export async function embedWord(word: string): Promise<number[]> {
-  const client = new OpenAI();
-  const res = await client.embeddings.create({ model: EMBED_MODEL, input: word });
-  return res.data[0].embedding;
+// --- word2vec store (loaded once, lazily) ---
+interface Store {
+  dim: number;
+  scale: number;
+  index: Map<string, number>;
+  vecs: Int16Array;
+}
+let store: Store | null = null;
+
+function load(): Store {
+  if (store) return store;
+  const dir = fileURLToPath(new URL('./w2v/', import.meta.url));
+  const vocab = JSON.parse(readFileSync(`${dir}w2v-vocab.json`, 'utf8')) as {
+    dim: number;
+    scale: number;
+    words: string[];
+  };
+  const buf = readFileSync(`${dir}w2v.i16`);
+  const vecs = new Int16Array(buf.buffer, buf.byteOffset, buf.byteLength / 2);
+  const index = new Map<string, number>();
+  vocab.words.forEach((w, i) => index.set(w, i));
+  store = { dim: vocab.dim, scale: vocab.scale, index, vecs };
+  return store;
 }
 
-/** Embed up to a few words in one call (word-algebra terms). */
-export async function embedWords(words: string[]): Promise<number[][]> {
-  const client = new OpenAI();
-  const res = await client.embeddings.create({ model: EMBED_MODEL, input: words });
-  return res.data.map((d) => d.embedding);
+/** Row index for a word, trying phrase/hyphen → underscore variants. */
+function lookup(s: Store, word: string): number | undefined {
+  for (const cand of [word, word.replace(/ /g, '_'), word.replace(/-/g, '_')]) {
+    const i = s.index.get(cand);
+    if (i !== undefined) return i;
+  }
+  return undefined;
+}
+
+export function embedWord(word: string): number[] {
+  const s = load();
+  const row = lookup(s, word);
+  if (row === undefined) throw new OutOfVocabError(word);
+  const out = new Array<number>(s.dim);
+  const base = row * s.dim;
+  for (let j = 0; j < s.dim; j++) out[j] = s.vecs[base + j] * s.scale;
+  return out;
+}
+
+/** Embed up to a few words (word-algebra terms); throws on the first miss. */
+export function embedWords(words: string[]): number[][] {
+  return words.map((w) => embedWord(w));
 }
 
 // Simple per-IP sliding-window rate limit (in-memory; resets on cold start).

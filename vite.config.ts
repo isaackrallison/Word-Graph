@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv, type Plugin, type ViteDevServer } from 'vite';
+import { defineConfig, type Plugin, type ViteDevServer } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // Serve api/embed.ts at /api/embed during `npm run dev`, matching the route
@@ -21,12 +21,6 @@ function devApi(): Plugin {
   };
 }
 
-export default defineConfig(({ mode }) => {
-  // Make OPENAI_API_KEY from .env.local visible to the dev API handler.
-  const env = loadEnv(mode, process.cwd(), '');
-  if (env.OPENAI_API_KEY) process.env.OPENAI_API_KEY = env.OPENAI_API_KEY;
-
-  return {
-    plugins: [react(), devApi()],
-  };
-});
+export default defineConfig(() => ({
+  plugins: [react(), devApi()],
+}));

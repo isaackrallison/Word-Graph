@@ -14,25 +14,19 @@ function check(name: string, ok: boolean, detail = '') {
 let seed = 42;
 const rng = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31 - 0.5;
 
-const DIMS = 16;
-const PCA = 4;
+const DIMS = 16; // coords are the raw word2vec vectors — no separate PCA space
 const COUNT = 300;
 
 function makeData(): GraphData {
-  const mean = Float32Array.from({ length: DIMS }, rng);
-  const components = Float32Array.from({ length: PCA * DIMS }, rng);
-  const coords = Float32Array.from({ length: COUNT * PCA }, rng);
+  const coords = Float32Array.from({ length: COUNT * DIMS }, rng);
   const positions = new Float32Array(COUNT * 3);
   for (let i = 0; i < COUNT; i++)
-    for (let a = 0; a < 3; a++) positions[i * 3 + a] = coords[i * PCA + a] * 50;
+    for (let a = 0; a < 3; a++) positions[i * 3 + a] = coords[i * DIMS + a] * 50;
   return {
     words: Array.from({ length: COUNT }, (_, i) => ({ word: `w${i}`, cluster: i % 8 })),
     count: COUNT,
     dims: DIMS,
-    pcaDims: PCA,
     coords,
-    mean,
-    components,
     positions,
     cloudRadius: 50,
     regions: [],
@@ -40,17 +34,13 @@ function makeData(): GraphData {
 }
 const data = makeData();
 
-// --- projectEmbedding: matches a hand-rolled projection ---
+// --- projectEmbedding: identity (coords are the raw word2vec space) ---
 {
   const e = Array.from({ length: DIMS }, rng);
   const got = projectEmbedding(e, data);
   let maxDiff = 0;
-  for (let i = 0; i < PCA; i++) {
-    let dot = 0;
-    for (let j = 0; j < DIMS; j++) dot += data.components[i * DIMS + j] * (e[j] - data.mean[j]);
-    maxDiff = Math.max(maxDiff, Math.abs(dot - got[i]));
-  }
-  check('projection matches manual matmul', maxDiff < 1e-5, `maxDiff ${maxDiff.toExponential(1)}`);
+  for (let j = 0; j < DIMS; j++) maxDiff = Math.max(maxDiff, Math.abs(e[j] - got[j]));
+  check('projection returns the vector unchanged', got.length === DIMS && maxDiff === 0);
   check('rejects wrong dimensionality', (() => { try { projectEmbedding([1, 2, 3], data); return false; } catch { return true; } })());
 }
 
@@ -65,7 +55,7 @@ const data = makeData();
   const pb = projectEmbedding(b, data);
   const pc = projectEmbedding(c, data);
   let maxDiff = 0;
-  for (let i = 0; i < PCA; i++) maxDiff = Math.max(maxDiff, Math.abs(direct[i] - (pa[i] - pb[i] + pc[i])));
+  for (let i = 0; i < DIMS; i++) maxDiff = Math.max(maxDiff, Math.abs(direct[i] - (pa[i] - pb[i] + pc[i])));
   check('projection is linear (algebra premise)', maxDiff < 1e-4, `maxDiff ${maxDiff.toExponential(1)}`);
 }
 
@@ -73,16 +63,16 @@ const data = makeData();
 {
   const cosine = (v: Float32Array, i: number) => {
     let dot = 0, vn = 0, rn = 0;
-    for (let j = 0; j < PCA; j++) {
-      dot += v[j] * data.coords[i * PCA + j];
+    for (let j = 0; j < DIMS; j++) {
+      dot += v[j] * data.coords[i * DIMS + j];
       vn += v[j] * v[j];
-      rn += data.coords[i * PCA + j] ** 2;
+      rn += data.coords[i * DIMS + j] ** 2;
     }
     return dot / (Math.sqrt(vn * rn) || 1);
   };
   let agree = true;
   for (let q = 0; q < 5; q++) {
-    const v = Float32Array.from({ length: PCA }, rng);
+    const v = Float32Array.from({ length: DIMS }, rng);
     const got = nearestNeighbors(v, data, 10).map((n) => n.index);
     const want = Array.from({ length: COUNT }, (_, i) => i)
       .sort((x, y) => cosine(v, y) - cosine(v, x))
@@ -90,7 +80,7 @@ const data = makeData();
     if (got.join() !== want.join()) agree = false;
   }
   check('top-10 matches brute-force sort (5 random queries)', agree);
-  const exact = nearestNeighbors(data.coords.slice(7 * PCA, 8 * PCA), data, 1);
+  const exact = nearestNeighbors(data.coords.slice(7 * DIMS, 8 * DIMS), data, 1);
   check('a word is its own nearest neighbor', exact[0].index === 7 && exact[0].similarity > 0.999);
 }
 

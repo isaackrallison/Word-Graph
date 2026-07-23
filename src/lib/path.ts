@@ -1,9 +1,9 @@
 // Word-to-word "star trail": a semantic path between two words. We walk a
-// straight line through the 192-dim PCA space from one word's vector to the
+// straight line through the 300-dim word2vec space from one word's vector to the
 // other and snap each sample to its nearest real word — the ordered, de-duped
 // result is a chain of stepping-stone words ("cat → kitten → pet → … → dog").
-// Linear interpolation in PCA space is meaningful because the projection is
-// linear (same reasoning as the word algebra).
+// Linear interpolation is meaningful because coords are the raw vectors (no
+// PCA), same reasoning as the word algebra.
 
 import type { GraphData } from './data';
 import { nearestNeighbors } from './project';
@@ -30,13 +30,13 @@ export function semanticPath(
   samples = 36,
   maxNodes = 16
 ): number[] {
-  const { pcaDims } = data;
-  const tmp = new Float32Array(pcaDims);
+  const { dims } = data;
+  const tmp = new Float32Array(dims);
   const path: number[] = [];
   const seen = new Set<number>();
   for (let s = 0; s <= samples; s++) {
     const t = s / samples;
-    for (let j = 0; j < pcaDims; j++) tmp[j] = (1 - t) * fromVec[j] + t * toVec[j];
+    for (let j = 0; j < dims; j++) tmp[j] = (1 - t) * fromVec[j] + t * toVec[j];
     const nn = nearestNeighbors(tmp, data, 1)[0];
     if (!nn || seen.has(nn.index)) continue;
     seen.add(nn.index);

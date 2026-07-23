@@ -1,6 +1,6 @@
 // Unit tests for the embed API: input validation, rate limiting, and the
-// handler's rejection paths (everything that returns before touching OpenAI —
-// no network, no key needed).
+// handler's rejection paths (everything that returns before the word2vec
+// lookup — no store load needed).
 //   npx tsx scripts/test-api.ts
 
 import { rateLimited, validateWord } from '../api/_core.ts';

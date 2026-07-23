@@ -1,19 +1,22 @@
-"""Reduction pipeline: embeddings → PCA(192) → k-means(8) → UMAP-3D → public/data/.
+"""Reduction pipeline: word2vec vectors → k-means(8) → UMAP-3D → public/data/.
 
-Reads the binary cache written by scripts/embed.ts and produces everything the
-app loads at runtime. NumPy/sklearn/umap-learn handle 100k x 1536 in minutes.
+Reads the binary cache written by scripts/embed_word2vec.py and produces
+everything the app loads at runtime. NumPy/sklearn/umap-learn handle the
+~66k x 300 word2vec vectors in seconds.
 
-UMAP params (n_neighbors=10, min_dist=0.05) were chosen by a measured bake-off
-(scripts/compare_layouts.py + eval_layout.py): they lift top-10 neighbor recall
-from 38% to 44% vs the old n_neighbors=15/min_dist=0.15 while keeping global
-structure intact. PaCMAP/densMAP were tested and lost at n_components=3.
+No PCA: at 300 dims the raw word2vec vectors ARE the shipped similarity space
+(coords.i16, ~38MB int16) — the app does cosine directly on them, and a typed
+word's vector from /api/embed lands in the same space with no projection. A
+measured bake-off (scripts/tune_umap.py + tune_umap_raw.py, scored against the
+raw-300 neighbor truth) showed raw-300 input beats a PCA-192 reduction at every
+UMAP setting, and picked n_neighbors=8, min_dist=0.0 — recall@10 ≈ 29% (up from
+~25% at the old nn=10/md=0.05) with global structure intact.
 
 Outputs (public/data/):
   words.json      [{w, c}] in coord order
-  coords.i16      N x 192 int16, per-dim quantized PCA coords (scales in meta)
+  coords.i16      N x 300 int16, per-dim quantized word2vec coords (scales in meta)
   layout.f32      N x 3 float32 scene positions from UMAP (normalized)
-  projection.bin  float32: mean(1536) ++ components(50 x 1536) row-major
-  meta.json       dims, pcaDims, count, coordScales, layout tag, …
+  meta.json       dims, count, coordScales, layout tag, …
 """
 
 import json
@@ -21,10 +24,11 @@ import time
 
 import numpy as np
 
-EMBED_DIMS = 1536
-PCA_DIMS = 192
+EMBED_DIMS = 300  # word2vec-google-news-300
 K_CLUSTERS = 8
-CLOUD_RADIUS = 100.0  # scene half-extent (larger than the 1k version — 100x the points)
+UMAP_N_NEIGHBORS = 8
+UMAP_MIN_DIST = 0.0
+CLOUD_RADIUS = 100.0  # scene half-extent
 OUT = "public/data"
 
 t0 = time.time()
@@ -40,44 +44,37 @@ X_all = np.fromfile("scripts/.cache/embeddings.f32", dtype=np.float32).reshape(-
 assert len(X_all) == len(cached), f"cache mismatch: {len(X_all)} vectors vs {len(cached)} words"
 mask = np.array([w in keep for w in cached])
 words = [w for w, m in zip(cached, mask) if m]
-X = X_all[mask]
+coords = X_all[mask]  # N x 300 — the raw word2vec similarity space (no PCA)
 log(
     f"loaded {len(cached)} cached embeddings; kept {len(words)} "
     f"(dropped {len(cached) - len(words)} non-vocab words; "
     f"{len(keep) - len(words)} wordlist words have no cached embedding — skipped this build)"
 )
 
-# --- PCA via covariance eigendecomposition ---
-mean = X.mean(axis=0)
-Xc = (X - mean).astype(np.float32)
-cov = (Xc.T @ Xc) / len(Xc)
-evals, evecs = np.linalg.eigh(cov.astype(np.float64))
-order = np.argsort(evals)[::-1]
-components = evecs[:, order[:PCA_DIMS]].T.astype(np.float32)  # PCA_DIMS x 1536
-coords = Xc @ components.T  # N x PCA_DIMS (192)
-explained_pca = float(evals[order[:PCA_DIMS]].sum() / evals.sum())
-explained3 = float(evals[order[:3]].sum() / evals.sum())
-log(f"PCA done — {PCA_DIMS}d explains {explained_pca * 100:.1f}%")
-
 # --- k-means for cluster colors ---
+# Cluster on L2-NORMALIZED vectors (cosine k-means): raw word2vec norms are very
+# skewed, so Euclidean k-means on the raw vectors collapses — a few high-norm
+# outliers become singleton clusters and ~97% of words fall into one blob (one
+# color). Normalizing matches the cosine similarity the app uses everywhere.
 from sklearn.cluster import MiniBatchKMeans
 
-labels = MiniBatchKMeans(K_CLUSTERS, random_state=42, n_init=10).fit_predict(coords)
+unit = coords / np.maximum(np.linalg.norm(coords, axis=1, keepdims=True), 1e-9)
+labels = MiniBatchKMeans(K_CLUSTERS, random_state=42, n_init=10).fit_predict(unit)
 log("k-means done")
 
 # --- UMAP 3-D layout (cosine, multithreaded) ---
 import umap
 
 emb3 = umap.UMAP(
-    n_components=3, n_neighbors=10, min_dist=0.05, spread=1.0, metric="cosine",
-    random_state=42, verbose=True
+    n_components=3, n_neighbors=UMAP_N_NEIGHBORS, min_dist=UMAP_MIN_DIST, spread=1.0,
+    metric="cosine", random_state=42, verbose=True
 ).fit_transform(coords)
 log("UMAP done")
 
-# --- layout quality: top-10 neighbor recall of the 3-D layout vs PCA space ---
-# (the KPI from scripts/eval_layout.py; persisted to meta so it's tracked, not
-# just printed. Computed on a fixed 500-word sample, neighbors over all N.)
-unit = coords / np.maximum(np.linalg.norm(coords, axis=1, keepdims=True), 1e-9)
+# --- layout quality: top-10 neighbor recall of the 3-D layout vs the raw-300
+# word2vec space (the KPI from scripts/eval_layout.py; persisted to meta so it's
+# tracked, not just printed. Computed on a fixed 500-word sample, neighbors over
+# all N). `unit` was already computed above for k-means. ---
 rng = np.random.default_rng(0)
 sample = rng.choice(len(words), min(500, len(words)), replace=False)
 overlap = 0.0
@@ -101,12 +98,11 @@ emb3 = emb3 - emb3.mean(axis=0)
 emb3 = emb3 * (CLOUD_RADIUS / np.abs(emb3).max())
 emb3.astype(np.float32).tofile(f"{OUT}/layout.f32")
 
+# Quantize the raw word2vec coords to int16 (per-dim scale). The app dequantizes
+# with these scales; measured lossless for neighbor rankings.
 scales = np.abs(coords).max(axis=0) / 32767.0
 quant = np.round(coords / scales).astype(np.int16)
 quant.tofile(f"{OUT}/coords.i16")
-
-proj = np.concatenate([mean.astype(np.float32).ravel(), components.ravel()])
-proj.tofile(f"{OUT}/projection.bin")
 
 json.dump(
     [{"w": w, "c": int(c)} for w, c in zip(words, labels)],
@@ -115,8 +111,8 @@ json.dump(
 )
 
 # --- region anchors for map-style "constellation" labels ---
-# k-means on the *3-D layout* (not PCA), so each region is a contiguous blob on
-# screen, named by its most frequent content word. See scripts/regions_util.py.
+# k-means on the *3-D layout* (not the raw space), so each region is a contiguous
+# blob on screen, named by its most frequent content word. See regions_util.py.
 from regions_util import compute_regions
 
 regions = compute_regions(emb3, words)
@@ -126,21 +122,20 @@ log(f"wrote {len(regions)} region anchors")
 json.dump(
     {
         "dims": EMBED_DIMS,
-        "pcaDims": PCA_DIMS,
         "count": len(words),
-        "model": "text-embedding-3-small",
+        "model": "word2vec-google-news-300",
         "layout": "umap-3d",
+        "umapNeighbors": UMAP_N_NEIGHBORS,
+        "umapMinDist": UMAP_MIN_DIST,
         "cloudRadius": CLOUD_RADIUS,
         "coordScales": [float(s) for s in scales],
-        "explainedVariance3d": explained3,
-        "explainedVariancePca": explained_pca,
         "recall10_3d": recall10_3d,
     },
     open(f"{OUT}/meta.json", "w"),
 )
 log("wrote public/data/")
 
-# --- sanity: PCA-space cosine neighbors for a few probe words ---
+# --- sanity: cosine neighbors for a few probe words ---
 widx = {w: i for i, w in enumerate(words)}
 for probe in ["cat", "pizza", "sad", "computer", "galaxy"]:
     i = widx.get(probe)

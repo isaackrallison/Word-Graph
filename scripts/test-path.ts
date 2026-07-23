@@ -24,31 +24,28 @@ check('rejects three-part', parsePathExpression('cat to dog to bird') === null);
 // nearestNeighbors snaps by COSINE (direction), so words are placed on a
 // semicircle: word i points at angle θ=π·i/(N-1). Distinct directions, and the
 // chord between two words sweeps monotonically through the intermediate angles.
-const PCA = 3;
+const DIMS = 3;
 const COUNT = 40;
-const coords = new Float32Array(COUNT * PCA);
+const coords = new Float32Array(COUNT * DIMS);
 const positions = new Float32Array(COUNT * 3);
 for (let i = 0; i < COUNT; i++) {
   const theta = (Math.PI * i) / (COUNT - 1);
-  coords[i * PCA] = Math.cos(theta);
-  coords[i * PCA + 1] = Math.sin(theta);
+  coords[i * DIMS] = Math.cos(theta);
+  coords[i * DIMS + 1] = Math.sin(theta);
   positions[i * 3] = i;
 }
 const data: GraphData = {
   words: Array.from({ length: COUNT }, (_, i) => ({ word: `w${i}`, cluster: 0 })),
   count: COUNT,
-  dims: PCA,
-  pcaDims: PCA,
+  dims: DIMS,
   coords,
-  mean: new Float32Array(PCA),
-  components: new Float32Array(PCA * PCA),
   positions,
   cloudRadius: COUNT,
   regions: [],
 };
 
-const from = coords.slice(5 * PCA, 6 * PCA); // w5
-const to = coords.slice(30 * PCA, 31 * PCA); // w30
+const from = coords.slice(5 * DIMS, 6 * DIMS); // w5
+const to = coords.slice(30 * DIMS, 31 * DIMS); // w30
 const path = semanticPath(from, to, data, 36, 16);
 
 check('path starts at source', path[0] === 5, `first = ${path[0]}`);

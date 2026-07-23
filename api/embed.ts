@@ -1,10 +1,11 @@
 // POST /api/embed
-//   { word: string }      → { word, embedding: number[1536] }
+//   { word: string }      → { word, embedding: number[300] }        (word2vec)
 //   { words: string[] }   → { embeddings: { word, embedding }[] }   (≤4, algebra terms)
+// A word outside the shipped word2vec vocab responds 400 (no subword fallback).
 // Runs as a Vercel Node function in production and is mounted as dev-server
 // middleware by vite.config.ts, so the handler sticks to plain Node req/res.
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { embedWord, embedWords, rateLimited, validateWord } from './_core.ts';
+import { embedWord, embedWords, OutOfVocabError, rateLimited, validateWord } from './_core.ts';
 
 function readBody(req: IncomingMessage & { body?: unknown }): Promise<unknown> {
   if (req.body !== undefined) return Promise.resolve(req.body); // Vercel pre-parses
@@ -42,11 +43,6 @@ export default async function handler(
 
   const body = (await readBody(req)) as { word?: unknown; words?: unknown };
 
-  // Input validation responds 400 regardless of server config; the key check
-  // guards only the paths that actually call OpenAI.
-  const missingKey = () =>
-    process.env.OPENAI_API_KEY ? null : json(res, 500, { error: 'Server is missing OPENAI_API_KEY.' });
-
   try {
     if (Array.isArray(body?.words)) {
       if (body.words.length === 0 || body.words.length > 4) {
@@ -56,8 +52,7 @@ export default async function handler(
       if (words.some((w) => w === null)) {
         return json(res, 400, { error: 'Every term must be a single word (letters only).' });
       }
-      if (missingKey() !== null) return;
-      const embeddings = await embedWords(words as string[]);
+      const embeddings = embedWords(words as string[]);
       return json(res, 200, {
         embeddings: (words as string[]).map((w, i) => ({ word: w, embedding: embeddings[i] })),
       });
@@ -65,10 +60,11 @@ export default async function handler(
 
     const word = validateWord(body?.word);
     if (!word) return json(res, 400, { error: 'Enter a single word (letters only).' });
-    if (missingKey() !== null) return;
-    const embedding = await embedWord(word);
+    const embedding = embedWord(word);
     return json(res, 200, { word, embedding });
   } catch (err) {
+    // A word outside the shipped word2vec vocab isn't a server fault — 400.
+    if (err instanceof OutOfVocabError) return json(res, 400, { error: err.message });
     console.error('embed failed:', err);
     return json(res, 502, { error: 'Embedding service unavailable.' });
   }

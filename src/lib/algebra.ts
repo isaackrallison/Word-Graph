@@ -1,7 +1,7 @@
-// Word algebra: parse "king - man + woman", combine term vectors in the
-// 50-dim PCA space, and rank the nearest words. The PCA projection is linear,
-// so client-side algebra on projected coords equals projecting the raw-space
-// algebra exactly — seed terms cost zero API calls.
+// Word algebra: parse "king - man + woman", combine term vectors in the raw
+// 300-dim word2vec space, and rank the nearest words. Coords are the raw
+// vectors (no PCA), so client-side algebra is exact and seed terms cost zero
+// API calls — word2vec's famously linear analogy structure applies directly.
 
 import type { GraphData } from './data';
 import { nearestNeighbors, type Neighbor } from './project';
@@ -98,7 +98,7 @@ export async function resolveTermVecs(
   return terms.map((t) => {
     const idx = wordIndex.get(t.word);
     if (idx !== undefined) {
-      return data.coords.slice(idx * data.pcaDims, (idx + 1) * data.pcaDims);
+      return data.coords.slice(idx * data.dims, (idx + 1) * data.dims);
     }
     const saved = added.find((a) => a.word === t.word);
     if (saved) return new Float32Array(saved.vec);

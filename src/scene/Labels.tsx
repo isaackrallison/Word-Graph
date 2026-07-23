@@ -40,9 +40,12 @@ interface LabelsProps {
   hovered: number | null;
   /** Word indices that must stay labeled (focused word, neighbors of a new word). */
   forced: number[];
+  /** When false (the "regions" label mode), only forced/hovered labels are drawn —
+   *  the ambient nearest-word and beacon labels are suppressed. */
+  ambient?: boolean;
 }
 
-export function Labels({ data, hovered, forced }: LabelsProps) {
+export function Labels({ data, hovered, forced, ambient = true }: LabelsProps) {
   const camera = useThree((s) => s.camera);
   const viewport = useThree((s) => s.size);
   const [visible, setVisible] = useState<LabelInfo[]>([]);
@@ -91,10 +94,12 @@ export function Labels({ data, hovered, forced }: LabelsProps) {
     const ppu = viewport.height / (2 * Math.tan(THREE.MathUtils.degToRad(fov) / 2));
 
     // --- 1. bounded top-k nearest in-front candidates (no full sort) ---
+    // Skipped in "regions" mode (ambient=false): only forced labels are drawn,
+    // so the O(count) nearest scan and the beacon pass below aren't needed.
     camera.getWorldDirection(forwardVec);
     const nearest: { index: number; d2: number }[] = [];
     let worst = Infinity;
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; ambient && i < count; i++) {
       toPoint
         .set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2])
         .sub(camera.position);
@@ -185,7 +190,7 @@ export function Labels({ data, hovered, forced }: LabelsProps) {
       if (c) candidates.push(c);
     }
     // Spread high-frequency beacons not already covered by the nearest set.
-    for (const index of beacons) {
+    for (const index of ambient ? beacons : []) {
       if (considered.has(index)) continue;
       considered.add(index);
       const c = project(index, false);

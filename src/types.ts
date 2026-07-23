@@ -6,7 +6,7 @@ export interface NeighborRef {
 
 export interface AddedWord {
   word: string;
-  vec: number[]; // pcaDims coords in the shared PCA basis
+  vec: number[]; // raw word2vec coords (dims-length), same space as the seeds
   position: [number, number, number];
   neighbors: NeighborRef[];
 }

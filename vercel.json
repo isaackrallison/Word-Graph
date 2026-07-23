@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/embed.ts": {
+      "includeFiles": "api/w2v/**"
+    }
+  }
+}
