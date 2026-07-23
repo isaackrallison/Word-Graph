@@ -114,6 +114,15 @@ json.dump(
     separators=(",", ":"),
 )
 
+# --- region anchors for map-style "constellation" labels ---
+# k-means on the *3-D layout* (not PCA), so each region is a contiguous blob on
+# screen, named by its most frequent content word. See scripts/regions_util.py.
+from regions_util import compute_regions
+
+regions = compute_regions(emb3, words)
+json.dump(regions, open(f"{OUT}/regions.json", "w"), separators=(",", ":"))
+log(f"wrote {len(regions)} region anchors")
+
 json.dump(
     {
         "dims": EMBED_DIMS,

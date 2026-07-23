@@ -1,10 +1,16 @@
 // Loads the precomputed data files from public/data/. Scene positions come
-// from the precomputed UMAP 3-D layout; the 50-dim PCA coords are used for
+// from the precomputed UMAP 3-D layout; the 192-dim PCA coords are used for
 // similarity (nearest neighbors and new-word placement).
 
 export interface WordEntry {
   word: string;
   cluster: number;
+}
+
+/** A map-style "constellation" region: a name at a scene-space centroid. */
+export interface Region {
+  word: string;
+  position: [number, number, number];
 }
 
 export interface GraphData {
@@ -17,6 +23,7 @@ export interface GraphData {
   components: Float32Array; // pcaDims x dims, row-major
   positions: Float32Array; // count x 3 scene positions (UMAP layout, scene units)
   cloudRadius: number; // scene half-extent the layout is normalized to
+  regions: Region[]; // named region anchors for map-style labels (may be empty)
 }
 
 async function fetchBuffer(url: string, onChunk?: (bytes: number) => void): Promise<ArrayBuffer> {
@@ -63,11 +70,15 @@ export async function loadGraphData(
     onProgress?.(Math.min(received / totalBytes, 1));
   };
 
-  const [wordsRaw, coordsBuf, projBuf, layoutBuf] = await Promise.all([
+  const [wordsRaw, coordsBuf, projBuf, layoutBuf, regionsRaw] = await Promise.all([
     fetch('/data/words.json').then((r) => r.json()) as Promise<{ w: string; c: number }[]>,
     fetchBuffer('/data/coords.i16', onChunk),
     fetchBuffer('/data/projection.bin', onChunk),
     fetchBuffer('/data/layout.f32', onChunk),
+    // Optional — an older data build may not have it; degrade to no regions.
+    fetch('/data/regions.json')
+      .then((r) => (r.ok ? (r.json() as Promise<{ w: string; x: number; y: number; z: number }[]>) : []))
+      .catch(() => []),
   ]);
   const quant = new Int16Array(coordsBuf);
   const proj = new Float32Array(projBuf);
@@ -100,5 +111,9 @@ export async function loadGraphData(
     components,
     positions,
     cloudRadius,
+    regions: (regionsRaw as { w: string; x: number; y: number; z: number }[]).map((r) => ({
+      word: r.w,
+      position: [r.x, r.y, r.z] as [number, number, number],
+    })),
   };
 }

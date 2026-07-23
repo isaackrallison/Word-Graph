@@ -12,6 +12,7 @@ import { NewWord } from './scene/NewWord';
 import { Effects, Starfield } from './scene/Effects';
 import { EquationMarker } from './scene/EquationMarker';
 import { NeighborLinks } from './scene/NeighborLinks';
+import { RegionLabels } from './scene/RegionLabels';
 import { GestureCursor } from './scene/GestureCursor';
 import { isMockHand, useGestures } from './gesture/useGestures';
 import { WordInput } from './ui/WordInput';
@@ -301,7 +302,10 @@ export default function App() {
               <WordCloud data={data} onHover={setHovered} onSelect={flyToIndex} />
             )}
             {!debugFlags.has('nolabels') && (
-              <Labels data={data} hovered={hovered} forced={forced} />
+              <>
+                <RegionLabels data={data} />
+                <Labels data={data} hovered={hovered} forced={forced} />
+              </>
             )}
             {added.map((a) => (
               <NewWord

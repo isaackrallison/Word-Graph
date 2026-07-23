@@ -19,8 +19,11 @@ import { greedyPlace, tier, type Rect } from '../lib/labelLayout';
  */
 
 const REFRESH_SECONDS = 0.4;
-const MAX_LABELS = 26;
+const MAX_LABELS = 30;
 const CANDIDATES = 400;
+const BEACON_POOL = 1500; // consider the N most frequent words as spread beacons
+const BEACON_CAP = 220; // …thinned to this many, ≥ BEACON_SEP apart in the layout
+const BEACON_SEP = 16; // scene units
 const MIN_PX = 10; // labels smaller than this are noise — skip
 const MAX_PX = 26; // …and larger than this dominate the view — cap
 const CHAR_ASPECT = 0.62; // approx glyph width / font size
@@ -48,6 +51,34 @@ export function Labels({ data, hovered, forced }: LabelsProps) {
   const forwardVec = useMemo(() => new THREE.Vector3(), []);
   const toPoint = useMemo(() => new THREE.Vector3(), []);
   const projVec = useMemo(() => new THREE.Vector3(), []);
+
+  // Semantic-zoom beacons: the most frequent words, spatially thinned so they're
+  // spread across the layout. Feeding these into the candidate pool means the
+  // globally-important words can label even when they aren't among the nearest
+  // 400 — so a zoomed-out overview shows meaningful words everywhere, not just
+  // whatever happens to be closest to the camera.
+  const beacons = useMemo(() => {
+    const { positions, count } = data;
+    const sep2 = BEACON_SEP * BEACON_SEP;
+    const chosen: number[] = [];
+    for (let i = 0; i < Math.min(BEACON_POOL, count) && chosen.length < BEACON_CAP; i++) {
+      const x = positions[i * 3];
+      const y = positions[i * 3 + 1];
+      const z = positions[i * 3 + 2];
+      let ok = true;
+      for (const j of chosen) {
+        const dx = x - positions[j * 3];
+        const dy = y - positions[j * 3 + 1];
+        const dz = z - positions[j * 3 + 2];
+        if (dx * dx + dy * dy + dz * dz < sep2) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) chosen.push(i);
+    }
+    return chosen;
+  }, [data]);
 
   useFrame((_, delta) => {
     clock.current += delta;
@@ -141,12 +172,22 @@ export function Labels({ data, hovered, forced }: LabelsProps) {
     };
 
     const candidates: Candidate[] = [];
+    const considered = new Set<number>();
     for (const index of mustShow) {
+      considered.add(index);
       const c = project(index, true);
       if (c) candidates.push(c);
     }
     for (const { index } of nearest) {
-      if (mustShow.has(index)) continue;
+      if (considered.has(index)) continue;
+      considered.add(index);
+      const c = project(index, false);
+      if (c) candidates.push(c);
+    }
+    // Spread high-frequency beacons not already covered by the nearest set.
+    for (const index of beacons) {
+      if (considered.has(index)) continue;
+      considered.add(index);
       const c = project(index, false);
       if (c) candidates.push(c);
     }

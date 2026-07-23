@@ -55,5 +55,27 @@ let sawSaturated = false;
 for (let i = 0; i < quant.length; i++) if (Math.abs(quant[i]) === 32767) sawSaturated = true;
 check('quantization uses the full int16 range', sawSaturated);
 
+// Region anchors (optional file, but validate when present).
+if (existsSync(`${DIR}/regions.json`)) {
+  const regions = JSON.parse(readFileSync(`${DIR}/regions.json`, 'utf8')) as {
+    w: string;
+    x: number;
+    y: number;
+    z: number;
+  }[];
+  const wordSet = new Set(words.map((w) => w.w));
+  check('regions.json non-empty', regions.length > 0, `${regions.length} regions`);
+  check('region names are real words', regions.every((r) => wordSet.has(r.w)));
+  check('region names are unique', new Set(regions.map((r) => r.w)).size === regions.length);
+  check(
+    'region positions within cloud',
+    regions.every(
+      (r) =>
+        [r.x, r.y, r.z].every(Number.isFinite) &&
+        Math.max(Math.abs(r.x), Math.abs(r.y), Math.abs(r.z)) <= cloudRadius + 1
+    )
+  );
+}
+
 console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);
