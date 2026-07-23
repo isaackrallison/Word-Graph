@@ -17,8 +17,14 @@ npm install
 npm run fetch-mediapipe            # vendors hand-tracking wasm + model → public/mediapipe/
 
 # one-time data build (needs OPENAI_API_KEY in .env.local; costs < 1¢)
-./.venv/bin/pip install numpy scikit-learn umap-learn wordfreq   # python 3.11+ venv
-npm run wordlist                   # → scripts/wordlist.txt (top-100k words)
+./.venv/bin/pip install numpy scikit-learn umap-learn wordfreq spylls   # python 3.11+ venv
+
+# vendor a Hunspell en_US dictionary for the real-word filter (→ scripts/dict/)
+mkdir -p scripts/dict
+curl -fsSL -o scripts/dict/en_US.aff https://raw.githubusercontent.com/wooorm/dictionaries/main/dictionaries/en/index.aff
+curl -fsSL -o scripts/dict/en_US.dic https://raw.githubusercontent.com/wooorm/dictionaries/main/dictionaries/en/index.dic
+
+npm run wordlist                   # → scripts/wordlist.txt (top real English words)
 npm run precompute                 # embed (resumable) + PCA/k-means/UMAP → public/data/
 
 npm run dev                        # http://localhost:5173
@@ -53,12 +59,26 @@ measurements (needs the local embeddings cache in `scripts/.cache/`).
 ## Data pipeline
 
 ```
-wordlist.py     wordfreq top-100k clean English words
+realwords.py    is_real_word() — Hunspell (en_US) spell-check, keeps inflections
+wordlist.py     wordfreq candidates → real-word filter → scripts/wordlist.txt
 embed.ts        OpenAI embeddings → scripts/.cache/embeddings.f32 (resumable)
-reduce.py       PCA-192 (+ int16 quantization) · k-means-8 colors · UMAP-3D layout
+reduce.py       filter cache to wordlist.txt · PCA-192 (+ int16 quantization)
+                · k-means-8 colors · UMAP-3D layout
                 → public/data/{words.json, coords.i16, layout.f32, projection.bin, meta.json}
 ```
 
 Positions come from UMAP (neighbor-faithful, not variance-faithful); the
 192-dim PCA coords are the source of truth for similarity — measured at 92%
 top-10 neighbor agreement with the full 1536-dim space.
+
+To re-tighten the vocabulary against an **already-cached** set of embeddings
+(e.g. after tweaking the real-word filter), rebuild without re-embedding:
+
+```sh
+npm run wordlist                       # regenerate the filtered scripts/wordlist.txt
+./.venv/bin/python scripts/reduce.py   # rebuild public/data/ from the cache — no OpenAI
+```
+
+Do **not** run `npm run precompute` for this — `embed.ts` sees the shrunk
+wordlist as a stale cache and re-embeds everything. `reduce.py` reads the cache
+directly and simply drops the rows no longer in the vocabulary.

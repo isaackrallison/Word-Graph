@@ -31,3 +31,5 @@ public/mediapipe/
 .venv/
 scripts/.cache/
 scripts/wordlist.txt
+scripts/dict/
+__pycache__/

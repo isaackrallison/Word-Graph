@@ -25,10 +25,22 @@ OUT = "public/data"
 t0 = time.time()
 log = lambda msg: print(f"[{time.time() - t0:6.1f}s] {msg}", flush=True)
 
-words = json.load(open("scripts/.cache/embed-words.json"))["words"]
-X = np.fromfile("scripts/.cache/embeddings.f32", dtype=np.float32).reshape(-1, EMBED_DIMS)
-assert len(X) == len(words), f"cache mismatch: {len(X)} vectors vs {len(words)} words"
-log(f"loaded {len(X)} embeddings")
+# Vocabulary = scripts/wordlist.txt (real-word filtered). Keep only the cached
+# embeddings whose word is still in the vocabulary — no re-embedding needed,
+# since the wordlist is a subset of what's already cached. Cache order is
+# preserved so all output files stay index-aligned.
+keep = set(open("scripts/wordlist.txt").read().split())
+cached = json.load(open("scripts/.cache/embed-words.json"))["words"]
+X_all = np.fromfile("scripts/.cache/embeddings.f32", dtype=np.float32).reshape(-1, EMBED_DIMS)
+assert len(X_all) == len(cached), f"cache mismatch: {len(X_all)} vectors vs {len(cached)} words"
+mask = np.array([w in keep for w in cached])
+words = [w for w, m in zip(cached, mask) if m]
+X = X_all[mask]
+log(
+    f"loaded {len(cached)} cached embeddings; kept {len(words)} "
+    f"(dropped {len(cached) - len(words)} non-vocab words; "
+    f"{len(keep) - len(words)} wordlist words have no cached embedding — skipped this build)"
+)
 
 # --- PCA via covariance eigendecomposition ---
 mean = X.mean(axis=0)
