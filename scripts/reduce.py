@@ -1,11 +1,16 @@
-"""Reduction pipeline: embeddings → PCA(50) → k-means(8) → UMAP-3D → public/data/.
+"""Reduction pipeline: embeddings → PCA(192) → k-means(8) → UMAP-3D → public/data/.
 
 Reads the binary cache written by scripts/embed.ts and produces everything the
 app loads at runtime. NumPy/sklearn/umap-learn handle 100k x 1536 in minutes.
 
+UMAP params (n_neighbors=10, min_dist=0.05) were chosen by a measured bake-off
+(scripts/compare_layouts.py + eval_layout.py): they lift top-10 neighbor recall
+from 38% to 44% vs the old n_neighbors=15/min_dist=0.15 while keeping global
+structure intact. PaCMAP/densMAP were tested and lost at n_components=3.
+
 Outputs (public/data/):
   words.json      [{w, c}] in coord order
-  coords.i16      N x 50 int16, per-dim quantized PCA coords (scales in meta)
+  coords.i16      N x 192 int16, per-dim quantized PCA coords (scales in meta)
   layout.f32      N x 3 float32 scene positions from UMAP (normalized)
   projection.bin  float32: mean(1536) ++ components(50 x 1536) row-major
   meta.json       dims, pcaDims, count, coordScales, layout tag, …
@@ -49,10 +54,10 @@ cov = (Xc.T @ Xc) / len(Xc)
 evals, evecs = np.linalg.eigh(cov.astype(np.float64))
 order = np.argsort(evals)[::-1]
 components = evecs[:, order[:PCA_DIMS]].T.astype(np.float32)  # PCA_DIMS x 1536
-coords = Xc @ components.T  # N x 50
-explained50 = float(evals[order[:PCA_DIMS]].sum() / evals.sum())
+coords = Xc @ components.T  # N x PCA_DIMS (192)
+explained_pca = float(evals[order[:PCA_DIMS]].sum() / evals.sum())
 explained3 = float(evals[order[:3]].sum() / evals.sum())
-log(f"PCA done — 50d explains {explained50 * 100:.1f}%")
+log(f"PCA done — {PCA_DIMS}d explains {explained_pca * 100:.1f}%")
 
 # --- k-means for cluster colors ---
 from sklearn.cluster import MiniBatchKMeans
@@ -64,9 +69,28 @@ log("k-means done")
 import umap
 
 emb3 = umap.UMAP(
-    n_components=3, n_neighbors=15, min_dist=0.15, spread=1.2, metric="cosine", verbose=True
+    n_components=3, n_neighbors=10, min_dist=0.05, spread=1.0, metric="cosine",
+    random_state=42, verbose=True
 ).fit_transform(coords)
 log("UMAP done")
+
+# --- layout quality: top-10 neighbor recall of the 3-D layout vs PCA space ---
+# (the KPI from scripts/eval_layout.py; persisted to meta so it's tracked, not
+# just printed. Computed on a fixed 500-word sample, neighbors over all N.)
+unit = coords / np.maximum(np.linalg.norm(coords, axis=1, keepdims=True), 1e-9)
+rng = np.random.default_rng(0)
+sample = rng.choice(len(words), min(500, len(words)), replace=False)
+overlap = 0.0
+for i in sample:
+    sims = unit @ unit[i]
+    sims[i] = -np.inf
+    true10 = set(np.argpartition(sims, -10)[-10:])
+    d3 = ((emb3 - emb3[i]) ** 2).sum(axis=1)
+    d3[i] = np.inf
+    near10 = set(np.argpartition(d3, 10)[:10])
+    overlap += len(true10 & near10) / 10
+recall10_3d = float(overlap / len(sample))
+log(f"3-D neighbor recall@10 = {recall10_3d * 100:.1f}%")
 
 # --- write outputs ---
 import os
@@ -100,15 +124,14 @@ json.dump(
         "cloudRadius": CLOUD_RADIUS,
         "coordScales": [float(s) for s in scales],
         "explainedVariance3d": explained3,
-        "explainedVariance50d": explained50,
+        "explainedVariancePca": explained_pca,
+        "recall10_3d": recall10_3d,
     },
     open(f"{OUT}/meta.json", "w"),
 )
 log("wrote public/data/")
 
-# --- sanity: 50-dim cosine neighbors + 3-D layout preservation on a sample ---
-norms = np.linalg.norm(coords, axis=1, keepdims=True)
-unit = coords / np.maximum(norms, 1e-9)
+# --- sanity: PCA-space cosine neighbors for a few probe words ---
 widx = {w: i for i, w in enumerate(words)}
 for probe in ["cat", "pizza", "sad", "computer", "galaxy"]:
     i = widx.get(probe)
@@ -117,16 +140,3 @@ for probe in ["cat", "pizza", "sad", "computer", "galaxy"]:
     sims = unit @ unit[i]
     top = np.argsort(sims)[::-1][1:6]
     print(f"{probe} → {', '.join(words[j] for j in top)}")
-
-rng = np.random.default_rng(0)
-sample = rng.choice(len(words), 500, replace=False)
-overlap = 0.0
-for i in sample:
-    sims = unit @ unit[i]
-    sims[i] = -np.inf
-    true10 = set(np.argpartition(sims, -10)[-10:])
-    d3 = ((emb3 - emb3[i]) ** 2).sum(axis=1)
-    d3[i] = np.inf
-    near10 = set(np.argpartition(d3, 10)[:10])
-    overlap += len(true10 & near10) / 10
-print(f"3-D neighbor preservation (500-word sample, top-10): {overlap / len(sample) * 100:.1f}%")

@@ -11,7 +11,7 @@ export interface GraphData {
   words: WordEntry[];
   count: number;
   dims: number; // raw embedding dims (1536)
-  pcaDims: number; // reduced dims (50)
+  pcaDims: number; // reduced dims (192)
   coords: Float32Array; // count x pcaDims, row-major (dequantized)
   mean: Float32Array; // dims
   components: Float32Array; // pcaDims x dims, row-major
