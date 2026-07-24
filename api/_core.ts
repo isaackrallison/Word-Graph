@@ -18,6 +18,14 @@ export class OutOfVocabError extends Error {
   }
 }
 
+/** Thrown when a word is on the profanity/slur blocklist (public exhibit). */
+export class BlockedWordError extends Error {
+  constructor(public word: string) {
+    super(`Let's keep it friendly — try a different word.`);
+    this.name = 'BlockedWordError';
+  }
+}
+
 /** Normalize and validate user input: 1-3 lowercase words, letters/hyphens/apostrophes. */
 export function validateWord(input: unknown): string | null {
   if (typeof input !== 'string') return null;
@@ -34,6 +42,7 @@ interface Store {
   scale: number;
   index: Map<string, number>;
   vecs: Int16Array;
+  blocked: Set<string>;
 }
 let store: Store | null = null;
 
@@ -49,7 +58,15 @@ function load(): Store {
   const vecs = new Int16Array(buf.buffer, buf.byteOffset, buf.byteLength / 2);
   const index = new Map<string, number>();
   vocab.words.forEach((w, i) => index.set(w, i));
-  store = { dim: vocab.dim, scale: vocab.scale, index, vecs };
+  // Profanity/slur blocklist — reject these even though word2vec has vectors,
+  // so a typed slur can't be flown into the galaxy on a public exhibit.
+  let blocked = new Set<string>();
+  try {
+    blocked = new Set(readFileSync(`${dir}blocklist.txt`, 'utf8').split(/\s+/).filter(Boolean));
+  } catch {
+    /* no blocklist shipped — leave empty */
+  }
+  store = { dim: vocab.dim, scale: vocab.scale, index, vecs, blocked };
   return store;
 }
 
@@ -64,6 +81,9 @@ function lookup(s: Store, word: string): number | undefined {
 
 export function embedWord(word: string): number[] {
   const s = load();
+  if (s.blocked.has(word) || s.blocked.has(word.replace(/[ -]/g, '_'))) {
+    throw new BlockedWordError(word);
+  }
   const row = lookup(s, word);
   if (row === undefined) throw new OutOfVocabError(word);
   const out = new Array<number>(s.dim);

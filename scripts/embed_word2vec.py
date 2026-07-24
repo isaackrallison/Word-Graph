@@ -111,3 +111,11 @@ json.dump(
     separators=(",", ":"),
 )
 log(f"wrote runtime store api/w2v/w2v.i16 ({R.nbytes // 2 // 1_000_000} MB int16)")
+
+# Ship the blocklist alongside the store so /api/embed rejects typed profanity
+# too (not just the galaxy). Same file scripts/wordlist.py + reduce.py use.
+import shutil
+
+if os.path.exists("scripts/blocklist.txt"):
+    shutil.copyfile("scripts/blocklist.txt", f"{API_DIR}/blocklist.txt")
+    log("copied blocklist.txt → api/w2v/")

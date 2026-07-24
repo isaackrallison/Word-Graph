@@ -1,7 +1,7 @@
 # Word Galaxy
 
-~66,000 English words embedded with **word2vec** and arranged in an explorable
-3-D universe. Fly around with mouse, keyboard, or **bare hands** (webcam gesture
+~38,000 curated English words embedded with **word2vec** and arranged in an
+explorable 3-D universe. Fly around with mouse, keyboard, or **bare hands** (webcam gesture
 tracking); type any word to watch it fly into place among its semantic
 neighbors; do word algebra (`king - man + woman` → *queen*).
 
@@ -88,11 +88,15 @@ nn=10/md=0.05) with global structure intact. The shipped recall is persisted to
 
 ```
 realwords.py       is_real_word() — Hunspell (en_US) spell-check, keeps inflections
-wordlist.py        wordfreq candidates → real-word filter → scripts/wordlist.txt
+wordfilter.py      BLOCKLIST (scripts/blocklist.txt: profanity/slurs/Roman
+                   numerals/abbreviations) + inflection dedup (drop plurals/verb
+                   forms whose base is present, protecting the top 3000 words)
+wordlist.py        wordfreq candidates → real-word + blocklist filter → wordlist.txt
 embed_word2vec.py  word2vec lookup → scripts/.cache/embeddings.f32
-                   + runtime bundle api/w2v/{w2v.i16, w2v-vocab.json}
-reduce.py          filter cache to wordlist.txt · int16-quantize the raw 300-d
-                   coords · k-means-8 colors · UMAP-3D layout · region anchors
+                   + runtime bundle api/w2v/{w2v.i16, w2v-vocab.json, blocklist.txt}
+reduce.py          filter cache to wordlist.txt · apply blocklist + dedup ·
+                   int16-quantize the raw 300-d coords · k-means-8 colors (on
+                   L2-normalized vectors) · UMAP-3D layout · region anchors
                    → public/data/{words.json, coords.i16, layout.f32,
                      regions.json, meta.json}
 regions_util.py    compute_regions() — k-means on the 3-D layout, named by most

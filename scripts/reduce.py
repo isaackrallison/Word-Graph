@@ -34,21 +34,35 @@ OUT = "public/data"
 t0 = time.time()
 log = lambda msg: print(f"[{time.time() - t0:6.1f}s] {msg}", flush=True)
 
-# Vocabulary = scripts/wordlist.txt (real-word filtered). Keep only the cached
-# embeddings whose word is still in the vocabulary — no re-embedding needed,
-# since the wordlist is a subset of what's already cached. Cache order is
-# preserved so all output files stay index-aligned.
-keep = set(open("scripts/wordlist.txt").read().split())
+# Vocabulary = scripts/wordlist.txt (real-word filtered), minus the quality
+# blocklist (profanity/slurs/Roman numerals/abbreviations) and minus inflected
+# forms whose base is present (near-duplicate word2vec vectors). See
+# scripts/wordfilter.py. All filtering happens here so a rebuild needs no
+# re-embed. Cache order is preserved so all output files stay index-aligned.
+from wordfilter import BLOCKLIST, dedupe_inflections
+
+wordlist = set(open("scripts/wordlist.txt").read().split())
+keep = wordlist - BLOCKLIST
 cached = json.load(open("scripts/.cache/embed-words.json"))["words"]
 X_all = np.fromfile("scripts/.cache/embeddings.f32", dtype=np.float32).reshape(-1, EMBED_DIMS)
 assert len(X_all) == len(cached), f"cache mismatch: {len(X_all)} vectors vs {len(cached)} words"
-mask = np.array([w in keep for w in cached])
+
+# Words with a cached embedding that survive the blocklist (cache order), then
+# drop inflected near-duplicates whose base is present. The cache is frequency-
+# ordered, so protect the top DEDUP_PROTECT words from dedup — their plurals
+# (news, states, arms, means) are usually distinct concepts, not redundant.
+DEDUP_PROTECT = 3000
+cand = [w for w in cached if w in keep]
+protect = set(cand[:DEDUP_PROTECT])
+n_blocked = sum(1 for w in cached if w in wordlist and w in BLOCKLIST)
+kept_words, dropped_infl = dedupe_inflections(cand, protect=protect)
+final = set(kept_words)
+mask = np.array([w in final for w in cached])
 words = [w for w, m in zip(cached, mask) if m]
 coords = X_all[mask]  # N x 300 — the raw word2vec similarity space (no PCA)
 log(
     f"loaded {len(cached)} cached embeddings; kept {len(words)} "
-    f"(dropped {len(cached) - len(words)} non-vocab words; "
-    f"{len(keep) - len(words)} wordlist words have no cached embedding — skipped this build)"
+    f"(blocklist removed {n_blocked}; dedup dropped {len(dropped_infl)} inflections)"
 )
 
 # --- k-means for cluster colors ---

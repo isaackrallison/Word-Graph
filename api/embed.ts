@@ -5,7 +5,14 @@
 // Runs as a Vercel Node function in production and is mounted as dev-server
 // middleware by vite.config.ts, so the handler sticks to plain Node req/res.
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { embedWord, embedWords, OutOfVocabError, rateLimited, validateWord } from './_core.ts';
+import {
+  BlockedWordError,
+  embedWord,
+  embedWords,
+  OutOfVocabError,
+  rateLimited,
+  validateWord,
+} from './_core.ts';
 
 function readBody(req: IncomingMessage & { body?: unknown }): Promise<unknown> {
   if (req.body !== undefined) return Promise.resolve(req.body); // Vercel pre-parses
@@ -63,7 +70,8 @@ export default async function handler(
     const embedding = embedWord(word);
     return json(res, 200, { word, embedding });
   } catch (err) {
-    // A word outside the shipped word2vec vocab isn't a server fault — 400.
+    // A blocked or out-of-vocab word isn't a server fault — 400.
+    if (err instanceof BlockedWordError) return json(res, 400, { error: err.message });
     if (err instanceof OutOfVocabError) return json(res, 400, { error: err.message });
     console.error('embed failed:', err);
     return json(res, 502, { error: 'Embedding service unavailable.' });

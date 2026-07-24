@@ -21,6 +21,7 @@ import re
 from wordfreq import top_n_list
 
 from realwords import is_real_word
+from wordfilter import BLOCKLIST
 
 N = 100_000
 WORD_RE = re.compile(r"^[a-z]+$")
@@ -45,6 +46,8 @@ for w in candidates:
     if not (set(w) & VOWELS):  # consonant-only → abbreviation/initialism
         continue
     if len(w) <= 2 and w not in CLEAR_SHORT:
+        continue
+    if w in BLOCKLIST:  # profanity/slurs/Roman numerals/abbreviations
         continue
     if not is_real_word(w):
         continue
